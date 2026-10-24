@@ -1,10 +1,17 @@
 /**
  * 403Changer - Sihirdar Simgesi Değiştirici (Icon Swapper)
- * İstemci içinde sihirdar simgenizi istediğiniz LoL simgesiyle veya
- * kendi yüklediğiniz özel görsellerle değiştirmenizi sağlar.
+ *
+ * @name         IconSwapper
+ * @author       403Changer (Original by Yimikami)
+ * @description  İstemcideki sihirdar simgesini tüm LoL simgeleriyle veya özel yüklenen görsellerle anında değiştirir.
+ * @version      1.2.0
  */
 
 (() => {
+  "use strict";
+
+  if (window.__c403IconSwapperInstance) return;
+
   const CONFIG = {
     STYLE_ID: "c403-icon-swapper-styles",
     MODAL_ID: "c403-icon-swapper-modal",
@@ -71,19 +78,19 @@
       container = document.createElement("div");
       container.id = "c403-toast-container";
       container.style.cssText =
-        "position:fixed;bottom:24px;right:24px;z-index:999999;display:flex;flex-direction:column;gap:8px;pointer-events:none;";
+        "position:fixed;bottom:24px;right:24px;z-index:9999999;display:flex;flex-direction:column;gap:8px;pointer-events:none;";
       document.body.appendChild(container);
     }
     const toast = document.createElement("div");
     const borderCol = type === "error" ? "#ff4655" : "#c8aa6e";
-    toast.style.cssText = `background:rgba(10,14,20,0.95);border:1px solid ${borderCol};border-left:4px solid ${borderCol};color:#f0e6d2;padding:10px 16px;border-radius:4px;font-size:12px;font-family:'Beaufort for LOL',sans-serif;box-shadow:0 6px 20px rgba(0,0,0,0.6);`;
+    toast.style.cssText = `background:rgba(10,14,20,0.96);border:1px solid ${borderCol};border-left:4px solid ${borderCol};color:#f0e6d2;padding:11px 18px;border-radius:4px;font-size:12.5px;font-family:'Beaufort for LOL',sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.7);`;
     toast.textContent = message;
     container.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = "0";
       toast.style.transition = "opacity 0.3s ease";
       setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, 3200);
   };
 
   const fileCache = {};
@@ -99,14 +106,14 @@
     if (!validTypes.includes(file.type)) {
       return {
         valid: false,
-        error: "Desteklenmeyen dosya formatı. Lütfen JPG, PNG, GIF veya WebP seçin.",
+        error: "Desteklenmeyen format. JPG, PNG, GIF veya WebP seçin.",
       };
     }
 
     if (file.size > maxSizeMB * 1024 * 1024) {
       return {
         valid: false,
-        error: `Görsel boyutu çok yüksek. Maksimum: ${maxSizeMB}MB`,
+        error: `Dosya çok büyük. Maksimum boyut: ${maxSizeMB}MB`,
       };
     }
 
@@ -154,7 +161,7 @@
         const dataUrl = canvas.toDataURL("image/png", 0.9);
         resolve({ dataUrl, width, height, originalUrl: url });
       };
-      img.onerror = () => reject(new Error("Görsel yüklenemedi."));
+      img.onerror = () => reject(new Error("Görsel indirilemedi."));
       img.src = url;
     });
   }
@@ -189,17 +196,12 @@
           ctx.drawImage(img, 0, 0, width, height);
 
           const dataUrl = canvas.toDataURL("image/png", quality);
-          fileCache[fileId] = {
-            dataUrl,
-            width,
-            height,
-            originalSize: file.size,
-          };
+          fileCache[fileId] = { dataUrl, width, height, originalSize: file.size };
           resolve(fileCache[fileId]);
         };
-        img.onerror = () => reject(new Error("Görsel okunamadı."));
+        img.onerror = () => reject(new Error("Görsel yüklenemedi."));
       };
-      reader.onerror = () => reject(new Error("Dosya okuma hatası."));
+      reader.onerror = () => reject(new Error("Dosya okunamadı."));
       reader.readAsDataURL(file);
     });
   }
@@ -231,7 +233,7 @@
             const res = await fetch("/lol-summoner/v1/current-summoner");
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            if (!data.summonerId || !data.puuid) throw new Error("Account is not ready");
+            if (!data.summonerId || !data.puuid) throw new Error("Hesap hazır değil");
             this.summonerId = data.summonerId;
             this.puuid = data.puuid;
             break;
@@ -243,7 +245,7 @@
 
         await this.applyCustomIcon();
       } catch (error) {
-        console.error("[403Changer] IconSwapper başlatılamadı:", error);
+        console.error("[403Changer] IconSwapper başlatma hatası:", error);
       }
     }
 
@@ -357,7 +359,7 @@
           const response = await fetch(CONFIG.API_URL);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const icons = await response.json();
-          if (!Array.isArray(icons)) throw new Error("Katalog listesi geçersiz");
+          if (!Array.isArray(icons)) throw new Error("Geçersiz katalog");
           const sorted = icons
             .filter((icon) => Number.isInteger(icon.id) && icon.id >= 0)
             .sort((a, b) => b.id - a.id);
@@ -377,32 +379,38 @@
       modal.id = CONFIG.MODAL_ID;
       modal.style.cssText = `
         position: fixed; inset: 0;
-        background: rgba(4, 7, 11, 0.82);
+        background: rgba(3, 6, 9, 0.85);
         backdrop-filter: blur(8px);
         display: flex; align-items: center; justify-content: center;
-        z-index: 100000;
+        z-index: 2147483640;
         font-family: 'Beaufort for LOL', 'Segoe UI', sans-serif;
-        animation: c403FadeIn 0.2s ease;
+        color: #cdbe91;
+        user-select: none;
+        animation: c403FadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       `;
       modal.onclick = (e) => {
         if (e.target === modal) modal.remove();
       };
 
+      const port = window.__bridge403 ? window.__bridge403.port : 50000;
+      const logoUrl = `http://127.0.0.1:${port}/asset/logo.png`;
+
       const content = document.createElement("div");
       content.style.cssText = `
-        width: 90%; max-width: 980px; height: 80%; max-height: 720px;
-        background: #0d1319;
-        border: 1px solid rgba(200, 170, 110, 0.4);
+        width: 92%; max-width: 1040px; height: 82%; max-height: 740px;
+        background: radial-gradient(120% 80% at 50% -20%, rgba(200, 170, 110, 0.12), transparent 60%),
+                    linear-gradient(180deg, #0d1319 0%, #070b0f 100%);
+        border: 1px solid rgba(200, 170, 110, 0.42);
         border-radius: 8px;
         display: flex; flex-direction: column;
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(200, 170, 110, 0.15);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
         overflow: hidden;
       `;
 
       content.innerHTML = `
         <style>
           @keyframes c403FadeIn {
-            from { opacity: 0; transform: scale(0.98); }
+            from { opacity: 0; transform: scale(0.97); }
             to { opacity: 1; transform: scale(1); }
           }
           @keyframes c403Spin {
@@ -410,50 +418,95 @@
             100% { transform: rotate(360deg); }
           }
           .c403-tab-btn {
-            width: 100%; padding: 12px 18px;
+            width: 100%; padding: 13px 18px;
             background: transparent; border: none; border-left: 3px solid transparent;
-            color: #a09b8c; text-align: left; font-size: 13px; font-weight: 600;
-            cursor: pointer; transition: all 0.2s ease; text-transform: uppercase;
-            letter-spacing: 0.5px;
+            color: rgba(205, 190, 145, 0.7); text-align: left; font-size: 13px; font-weight: 600;
+            cursor: pointer; transition: all 0.18s ease; text-transform: uppercase;
+            letter-spacing: 0.05em;
           }
           .c403-tab-btn:hover {
             color: #f0e6d2; background: rgba(200, 170, 110, 0.08);
           }
           .c403-tab-btn.active {
-            color: #c8aa6e; background: rgba(200, 170, 110, 0.12);
+            color: #c8aa6e; background: rgba(200, 170, 110, 0.14);
             border-left-color: #c8aa6e;
           }
-          .c403-icon-item {
-            position: relative; border-radius: 50%; cursor: pointer;
-            transition: all 0.2s ease; border: 2px solid rgba(200, 170, 110, 0.2);
-            overflow: hidden; aspect-ratio: 1;
+          
+          /* KESİN ÇARPIŞMASIZ SİMGE KUTULARI (Fixed Icon Grid & Cells) */
+          .c403-icon-cell {
+            position: relative;
+            width: 76px;
+            height: 76px;
+            flex: 0 0 76px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid rgba(200, 170, 110, 0.28);
+            background: #060a0e;
+            overflow: hidden;
+            box-sizing: border-box;
+            transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
           }
-          .c403-icon-item:hover {
-            transform: scale(1.08); border-color: #c8aa6e;
-            box-shadow: 0 0 16px rgba(200, 170, 110, 0.5);
+          .c403-icon-cell:hover {
+            transform: scale(1.14);
+            border-color: #c8aa6e;
+            box-shadow: 0 0 16px rgba(200, 170, 110, 0.7), 0 8px 24px rgba(0, 0, 0, 0.8);
+            z-index: 10;
           }
+          .c403-icon-cell img {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            display: block !important;
+            border-radius: 50% !important;
+            pointer-events: none !important;
+          }
+
           .c403-custom-card {
-            position: relative; display: flex; flex-direction: column;
-            align-items: center; gap: 8px; padding: 8px; border-radius: 8px;
-            background: rgba(18, 26, 34, 0.6); border: 1px solid rgba(200, 170, 110, 0.15);
-            transition: all 0.2s ease;
+            position: relative;
+            display: flex; flex-direction: column; align-items: center; gap: 8px;
+            padding: 12px 10px; border-radius: 8px;
+            background: linear-gradient(180deg, rgba(200, 170, 110, 0.05), rgba(0, 0, 0, 0.45));
+            border: 1px solid rgba(200, 170, 110, 0.2);
+            box-sizing: border-box; transition: all 0.2s ease;
           }
           .c403-custom-card:hover {
-            border-color: rgba(200, 170, 110, 0.4);
-            background: rgba(24, 34, 44, 0.8);
+            border-color: rgba(200, 170, 110, 0.55);
+            box-shadow: 0 0 18px rgba(200, 170, 110, 0.25);
+            background: linear-gradient(180deg, rgba(200, 170, 110, 0.1), rgba(0, 0, 0, 0.6));
           }
+          .c403-custom-thumb {
+            width: 72px; height: 72px; border-radius: 50%;
+            border: 2px solid rgba(200, 170, 110, 0.35);
+            overflow: hidden; cursor: pointer;
+            transition: transform 0.18s ease, border-color 0.18s ease;
+          }
+          .c403-custom-thumb:hover {
+            transform: scale(1.08); border-color: #f0e6d2;
+          }
+          .c403-custom-thumb img {
+            width: 100% !important; height: 100% !important;
+            object-fit: cover !important; display: block !important;
+          }
+
           .c403-scroll::-webkit-scrollbar { width: 6px; }
-          .c403-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
-          .c403-scroll::-webkit-scrollbar-thumb { background: #323b44; border-radius: 3px; }
+          .c403-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.25); }
+          .c403-scroll::-webkit-scrollbar-thumb { background: rgba(200, 170, 110, 0.3); border-radius: 3px; }
           .c403-scroll::-webkit-scrollbar-thumb:hover { background: #c8aa6e; }
         </style>
 
         <div style="display: flex; height: 100%; max-height: 100%;">
           <!-- Sidebar -->
           <div style="width: 220px; background: #080d12; border-right: 1px solid rgba(200, 170, 110, 0.2); display: flex; flex-direction: column;">
-            <div style="padding: 20px 16px; border-bottom: 1px solid rgba(200, 170, 110, 0.15);">
-              <div style="color: #f0e6d2; font-size: 15px; font-weight: 700; letter-spacing: 0.5px;">SİMGELER</div>
-              <div style="color: #c8aa6e; font-size: 11px; margin-top: 2px;">403Changer Modu</div>
+            <div style="padding: 18px 16px; border-bottom: 1px solid rgba(200, 170, 110, 0.18); display: flex; align-items: center; gap: 12px;">
+              <div style="width: 44px; height: 44px; background: url('${logoUrl}') center / contain no-repeat; filter: drop-shadow(0 0 8px rgba(200,170,110,0.5)); flex-shrink: 0;"></div>
+              <div>
+                <div style="color: #f0e6d2; font-size: 14.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;">SİMGELER</div>
+                <div style="color: #c8aa6e; font-size: 11px; margin-top: 2px;">403Changer Modu</div>
+              </div>
             </div>
 
             <div style="flex: 1; padding: 14px 0; display: flex; flex-direction: column; gap: 4px;">
@@ -461,13 +514,13 @@
               <button id="c403-tab-custom" class="c403-tab-btn">Özel Simgeler</button>
             </div>
 
-            <div style="padding: 16px; border-top: 1px solid rgba(200, 170, 110, 0.15); display: flex; flex-direction: column; gap: 8px;">
+            <div style="padding: 16px; border-top: 1px solid rgba(200, 170, 110, 0.18); display: flex; flex-direction: column; gap: 8px;">
               <button id="c403-btn-revert" style="
                 width: 100%; padding: 10px; background: rgba(200, 170, 110, 0.12);
                 color: #c8aa6e; border: 1px solid rgba(200, 170, 110, 0.4); border-radius: 4px;
                 cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s ease;
               ">Varsayılana Sıfırla</button>
-              <span style="color: #7a8288; font-size: 11px; text-align: center; line-height: 1.3;">Orijinal simgenize geri döndürür</span>
+              <span style="color: #7a8288; font-size: 10.5px; text-align: center; line-height: 1.3;">Orijinal sihirdar simgenize döner</span>
             </div>
           </div>
 
@@ -476,74 +529,83 @@
             <!-- Tab 1: LoL Simgeleri -->
             <div id="c403-tab-league-content" style="flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
               <!-- Header & Search -->
-              <div style="padding: 16px 24px; border-bottom: 1px solid rgba(200, 170, 110, 0.15); display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                <div style="position: relative; flex: 1; max-width: 380px;">
+              <div style="padding: 16px 24px; border-bottom: 1px solid rgba(200, 170, 110, 0.18); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: rgba(200, 170, 110, 0.04);">
+                <div style="position: relative; flex: 1; max-width: 400px;">
                   <input type="text" id="c403-icon-search" placeholder="Simge ID ile ara (örn: 588)..." style="
-                    width: 100%; padding: 9px 36px 9px 12px; background: #070b0e;
-                    border: 1px solid rgba(200, 170, 110, 0.3); border-radius: 4px;
+                    width: 100%; padding: 10px 38px 10px 14px; background: #070b0e;
+                    border: 1px solid rgba(200, 170, 110, 0.35); border-radius: 4px;
                     color: #f0e6d2; font-size: 13px; outline: none; transition: all 0.2s ease;
                   ">
                   <button id="c403-clear-search" style="
-                    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+                    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
                     background: none; border: none; color: #a09b8c; cursor: pointer;
                     font-size: 16px; width: 22px; height: 22px; display: none;
                     align-items: center; justify-content: center;
                   ">×</button>
                 </div>
-                <div id="c403-search-info" style="color: #a09b8c; font-size: 12px;"></div>
-                <button id="c403-close-btn-1" style="background:none;border:none;color:#7a8288;font-size:22px;cursor:pointer;line-height:1;">✕</button>
+                <div id="c403-search-info" style="color: #c8aa6e; font-size: 12px; font-weight: 600;"></div>
+                <button id="c403-close-btn-1" style="
+                  width: 30px; height: 30px; border: 1px solid rgba(200,170,110,.32);
+                  border-radius: 4px; background: transparent; color: #cdbe91;
+                  font-size: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+                  transition: all .15s ease;
+                ">✕</button>
               </div>
 
               <!-- Grid -->
               <div id="c403-league-grid" class="c403-scroll" style="
                 flex: 1; overflow-y: auto; display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-                gap: 16px; padding: 24px; align-content: start;
+                grid-template-columns: repeat(auto-fill, 78px);
+                gap: 16px; padding: 24px; align-content: start; justify-content: center;
               ">
-                <div style="grid-column: 1 / -1; text-align: center; padding: 48px 0;">
-                  <div style="display: inline-block; width: 32px; height: 32px; border: 3px solid rgba(200,170,110,0.2); border-top: 3px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite; margin-bottom: 12px;"></div>
-                  <div style="color: #a09b8c; font-size: 13px;">LoL simgeleri yükleniyor...</div>
+                <div style="grid-column: 1 / -1; text-align: center; padding: 60px 0;">
+                  <div style="display: inline-block; width: 34px; height: 34px; border: 3px solid rgba(200,170,110,0.2); border-top: 3px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite; margin-bottom: 12px;"></div>
+                  <div style="color: #a09b8c; font-size: 13.5px;">LoL simgeleri yükleniyor...</div>
                 </div>
               </div>
             </div>
 
             <!-- Tab 2: Özel Simgeler -->
             <div id="c403-tab-custom-content" style="flex: 1; display: none; flex-direction: column; min-height: 0; overflow: hidden;">
-              <div style="padding: 16px 24px; border-bottom: 1px solid rgba(200, 170, 110, 0.15); display: flex; align-items: center; justify-content: space-between;">
-                <div style="color: #f0e6d2; font-size: 14px; font-weight: 600;">Özel Simge Yönetimi</div>
-                <button id="c403-close-btn-2" style="background:none;border:none;color:#7a8288;font-size:22px;cursor:pointer;line-height:1;">✕</button>
+              <div style="padding: 16px 24px; border-bottom: 1px solid rgba(200, 170, 110, 0.18); display: flex; align-items: center; justify-content: space-between; background: rgba(200, 170, 110, 0.04);">
+                <div style="color: #f0e6d2; font-size: 14.5px; font-weight: 600; letter-spacing: 0.04em;">Özel Simge Yönetimi</div>
+                <button id="c403-close-btn-2" style="
+                  width: 30px; height: 30px; border: 1px solid rgba(200,170,110,.32);
+                  border-radius: 4px; background: transparent; color: #cdbe91;
+                  font-size: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+                ">✕</button>
               </div>
 
-              <div style="flex: 1; display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px; min-height: 0; overflow: hidden;">
+              <div style="flex: 1; display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 22px; min-height: 0; overflow: hidden;">
                 <!-- Sol Taraf: Yükleme & Önizleme -->
                 <div style="
-                  background: rgba(8, 13, 18, 0.7); border: 1px solid rgba(200, 170, 110, 0.2);
+                  background: rgba(8, 13, 18, 0.75); border: 1px solid rgba(200, 170, 110, 0.22);
                   border-radius: 6px; padding: 20px; display: flex; flex-direction: column; gap: 14px;
                 ">
-                  <div style="color: #c8aa6e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Simge Ekle</div>
+                  <div style="color: #c8aa6e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;">Simge Ekle</div>
 
                   <!-- Dosya Seçimi -->
                   <div>
                     <input type="file" id="c403-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none;">
                     <button id="c403-btn-choose-file" style="
-                      width: 100%; padding: 10px; background: rgba(200, 170, 110, 0.15);
-                      border: 1px solid rgba(200, 170, 110, 0.4); border-radius: 4px;
-                      color: #f0e6d2; font-size: 12px; font-weight: 600; cursor: pointer;
+                      width: 100%; padding: 11px; background: rgba(200, 170, 110, 0.15);
+                      border: 1px solid rgba(200, 170, 110, 0.45); border-radius: 4px;
+                      color: #f0e6d2; font-size: 12.5px; font-weight: 600; cursor: pointer;
                       transition: all 0.2s ease;
                     ">📁 Bilgisayardan Dosya Seç</button>
                     <div id="c403-file-label" style="color: #7a8288; font-size: 11px; margin-top: 6px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">Dosya seçilmedi</div>
                   </div>
 
                   <div style="display: flex; align-items: center; gap: 10px; color: #5c636a; font-size: 11px;">
-                    <div style="flex: 1; height: 1px; background: rgba(200, 170, 110, 0.1);"></div>
+                    <div style="flex: 1; height: 1px; background: rgba(200, 170, 110, 0.15);"></div>
                     <span>VEYA</span>
-                    <div style="flex: 1; height: 1px; background: rgba(200, 170, 110, 0.1);"></div>
+                    <div style="flex: 1; height: 1px; background: rgba(200, 170, 110, 0.15);"></div>
                   </div>
 
                   <!-- Link ile Ekleme -->
                   <div>
                     <input type="url" id="c403-url-input" placeholder="Görsel URL'si yapıştırın (https://...)" style="
-                      width: 100%; padding: 9px 12px; background: #070b0e;
+                      width: 100%; padding: 10px 12px; background: #070b0e;
                       border: 1px solid rgba(200, 170, 110, 0.25); border-radius: 4px;
                       color: #f0e6d2; font-size: 12px; outline: none; box-sizing: border-box;
                     ">
@@ -554,7 +616,7 @@
                   <div style="display: flex; flex-direction: column; align-items: center; margin-top: 4px;">
                     <div id="c403-preview-box" style="
                       width: 104px; height: 104px; border-radius: 50%;
-                      border: 2px dashed rgba(200, 170, 110, 0.3);
+                      border: 2px dashed rgba(200, 170, 110, 0.35);
                       display: flex; align-items: center; justify-content: center;
                       background: #070b0e; overflow: hidden;
                     ">
@@ -572,13 +634,13 @@
 
                 <!-- Sağ Taraf: Koleksiyon Listesi -->
                 <div style="
-                  background: rgba(8, 13, 18, 0.7); border: 1px solid rgba(200, 170, 110, 0.2);
+                  background: rgba(8, 13, 18, 0.75); border: 1px solid rgba(200, 170, 110, 0.22);
                   border-radius: 6px; padding: 20px; display: flex; flex-direction: column; min-height: 0;
                 ">
-                  <div style="color: #c8aa6e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px;">Koleksiyonum</div>
+                  <div style="color: #c8aa6e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Koleksiyonum</div>
                   <div id="c403-custom-grid" class="c403-scroll" style="
                     flex: 1; overflow-y: auto; display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+                    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
                     gap: 16px; align-content: start; padding-right: 6px;
                   ">
                     <div style="grid-column: 1 / -1; text-align: center; padding: 48px 16px; color: #7a8288;">
@@ -598,8 +660,10 @@
       document.body.appendChild(modal);
 
       // Kapat butonları
-      content.querySelector("#c403-close-btn-1").onclick = () => modal.remove();
-      content.querySelector("#c403-close-btn-2").onclick = () => modal.remove();
+      const close1 = content.querySelector("#c403-close-btn-1");
+      const close2 = content.querySelector("#c403-close-btn-2");
+      if (close1) close1.onclick = () => modal.remove();
+      if (close2) close2.onclick = () => modal.remove();
 
       // Sekme geçişleri
       const tabLeague = content.querySelector("#c403-tab-league");
@@ -653,16 +717,21 @@
         const slice = iconsToShow.slice(page * pageSize, (page + 1) * pageSize);
 
         slice.forEach((icon) => {
+          // Wrapped in a fixed circular cell to eliminate any layout collision/overlap
+          const cell = document.createElement("div");
+          cell.className = "c403-icon-cell";
+          cell.title = `Simge ID: ${icon.id} (Uygulamak için tıkla)`;
+
           const img = document.createElement("img");
-          img.className = "c403-icon-item";
           img.loading = "lazy";
           img.decoding = "async";
-          img.title = `ID: ${icon.id}`;
           img.alt = `Simge ${icon.id}`;
           img.src = `/lol-game-data/assets/v1/profile-icons/${icon.id}.jpg`;
-          img.onerror = () => img.remove();
+          img.onerror = () => cell.remove();
 
-          img.onclick = async () => {
+          cell.appendChild(img);
+
+          cell.onclick = async () => {
             await safeDataStore.set(CONFIG.DATASTORE_KEY, icon.id);
             await safeDataStore.set(CONFIG.CUSTOM_ICON_KEY, null);
             await this.applyCustomIcon();
@@ -670,27 +739,28 @@
             modal.remove();
           };
 
-          grid.appendChild(img);
+          grid.appendChild(cell);
         });
 
         const totalPages = Math.ceil(iconsToShow.length / pageSize);
         if (totalPages > 1) {
           const pager = document.createElement("div");
-          pager.style.cssText = "grid-column: 1 / -1; display: flex; gap: 12px; justify-content: center; align-items: center; padding: 16px 0; color: #a09b8c; font-size: 12px;";
+          pager.style.cssText = "grid-column: 1 / -1; display: flex; gap: 14px; justify-content: center; align-items: center; padding: 20px 0; color: #a09b8c; font-size: 12.5px;";
 
           const prevBtn = document.createElement("button");
           prevBtn.textContent = "« Önceki";
           prevBtn.disabled = page === 0;
-          prevBtn.style.cssText = `padding: 6px 12px; background: rgba(200,170,110,0.1); border: 1px solid rgba(200,170,110,0.3); border-radius: 4px; color: ${page === 0 ? "#5c636a" : "#c8aa6e"}; cursor: ${page === 0 ? "default" : "pointer"};`;
+          prevBtn.style.cssText = `padding: 7px 14px; background: rgba(200,170,110,0.12); border: 1px solid rgba(200,170,110,0.35); border-radius: 4px; color: ${page === 0 ? "#5c636a" : "#c8aa6e"}; cursor: ${page === 0 ? "default" : "pointer"}; font-weight: 600;`;
           prevBtn.onclick = () => renderLeagueIcons(iconsToShow, page - 1);
 
           const pageText = document.createElement("span");
           pageText.textContent = `${page + 1} / ${totalPages}`;
+          pageText.style.color = "#f0e6d2";
 
           const nextBtn = document.createElement("button");
           nextBtn.textContent = "Sonraki »";
           nextBtn.disabled = page + 1 >= totalPages;
-          nextBtn.style.cssText = `padding: 6px 12px; background: rgba(200,170,110,0.1); border: 1px solid rgba(200,170,110,0.3); border-radius: 4px; color: ${page + 1 >= totalPages ? "#5c636a" : "#c8aa6e"}; cursor: ${page + 1 >= totalPages ? "default" : "pointer"};`;
+          nextBtn.style.cssText = `padding: 7px 14px; background: rgba(200,170,110,0.12); border: 1px solid rgba(200,170,110,0.35); border-radius: 4px; color: ${page + 1 >= totalPages ? "#5c636a" : "#c8aa6e"}; cursor: ${page + 1 >= totalPages ? "default" : "pointer"}; font-weight: 600;`;
           nextBtn.onclick = () => renderLeagueIcons(iconsToShow, page + 1);
 
           pager.append(prevBtn, pageText, nextBtn);
@@ -784,7 +854,7 @@
         urlStatus.textContent = "";
 
         try {
-          previewBox.innerHTML = '<div style="width: 22px; height: 22px; border: 2px solid rgba(200,170,110,0.2); border-top: 2px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite;"></div>';
+          previewBox.innerHTML = '<div style="width: 24px; height: 24px; border: 2px solid rgba(200,170,110,0.2); border-top: 2px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite;"></div>';
           const processed = await processImageFile(file);
           pendingData = { ...processed, name: file.name };
           pendingSource = "file";
@@ -817,7 +887,7 @@
         urlStatus.textContent = "Görsel yükleniyor...";
         urlDebounce = setTimeout(async () => {
           try {
-            previewBox.innerHTML = '<div style="width: 22px; height: 22px; border: 2px solid rgba(200,170,110,0.2); border-top: 2px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite;"></div>';
+            previewBox.innerHTML = '<div style="width: 24px; height: 24px; border: 2px solid rgba(200,170,110,0.2); border-top: 2px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite;"></div>';
             const imgData = await loadImageFromUrl(url);
             pendingData = imgData;
             pendingSource = "url";
@@ -898,14 +968,16 @@
         const card = document.createElement("div");
         card.className = "c403-custom-card";
 
+        const thumb = document.createElement("div");
+        thumb.className = "c403-custom-thumb";
+        thumb.title = "Uygulamak için tıkla: " + icon.name;
+
         const img = document.createElement("img");
         img.src = icon.dataUrl;
-        img.title = "Uygulamak için tıkla: " + icon.name;
-        img.style.cssText = "width: 76px; height: 76px; border-radius: 50%; cursor: pointer; object-fit: cover; border: 2px solid rgba(200, 170, 110, 0.3); transition: all 0.2s ease;";
-        img.onmouseover = () => { img.style.borderColor = "#c8aa6e"; img.style.transform = "scale(1.05)"; };
-        img.onmouseout = () => { img.style.borderColor = "rgba(200, 170, 110, 0.3)"; img.style.transform = "scale(1)"; };
+        img.alt = icon.name;
+        thumb.appendChild(img);
 
-        img.onclick = async () => {
+        thumb.onclick = async () => {
           await safeDataStore.set(CONFIG.CUSTOM_ICON_KEY, icon.dataUrl);
           await safeDataStore.set(CONFIG.DATASTORE_KEY, null);
           await this.applyCustomIcon();
@@ -921,9 +993,9 @@
         const deleteBtn = document.createElement("button");
         deleteBtn.innerHTML = "🗑️";
         deleteBtn.title = "Sil";
-        deleteBtn.style.cssText = "background: none; border: none; cursor: pointer; font-size: 11px; opacity: 0.6; transition: opacity 0.2s ease; padding: 2px;";
+        deleteBtn.style.cssText = "background: none; border: none; cursor: pointer; font-size: 12px; opacity: 0.65; transition: opacity 0.2s ease; padding: 2px;";
         deleteBtn.onmouseover = () => { deleteBtn.style.opacity = "1"; };
-        deleteBtn.onmouseout = () => { deleteBtn.style.opacity = "0.6"; };
+        deleteBtn.onmouseout = () => { deleteBtn.style.opacity = "0.65"; };
 
         deleteBtn.onclick = async (e) => {
           e.stopPropagation();
@@ -939,7 +1011,7 @@
         bottomRow.appendChild(label);
         bottomRow.appendChild(deleteBtn);
 
-        card.appendChild(img);
+        card.appendChild(thumb);
         card.appendChild(bottomRow);
         grid.appendChild(card);
       });
@@ -949,17 +1021,17 @@
   // 403Changer Mod Ayar Çarkı Kaydı
   window.__c403ModSettings = window.__c403ModSettings || {};
   window.__c403ModSettings["iconswapper"] = () => {
-    if (window.iconSwapper) {
-      window.iconSwapper.showIconModal();
+    if (window.__c403IconSwapperInstance) {
+      window.__c403IconSwapperInstance.showIconModal();
     } else {
-      window.iconSwapper = new IconSwapper();
-      window.iconSwapper.showIconModal();
+      window.__c403IconSwapperInstance = new IconSwapper();
+      window.__c403IconSwapperInstance.showIconModal();
     }
   };
 
   const startInstance = () => {
-    if (!window.iconSwapper) {
-      window.iconSwapper = new IconSwapper();
+    if (!window.__c403IconSwapperInstance) {
+      window.__c403IconSwapperInstance = new IconSwapper();
     }
   };
 
