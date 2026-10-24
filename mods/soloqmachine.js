@@ -51,30 +51,42 @@
   };
 
   const loadConfig = () => {
+    let saved = null;
     try {
       if (window.DataStore && typeof window.DataStore.get === "function") {
-        const saved = window.DataStore.get(STORAGE_KEY);
-        if (saved) {
-          const parsed = typeof saved === "string" ? JSON.parse(saved) : saved;
-          const merged = deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
-          if (merged.instantRankedLobby) merged.instantRankedLobby.enabled = false;
-          return merged;
-        }
+        saved = window.DataStore.get(STORAGE_KEY);
       }
-    } catch (e) {
-      console.warn("[SoloQMachine] Ayarlar okunamadı:", e);
+    } catch (e) {}
+
+    if (!saved) {
+      try {
+        saved = localStorage.getItem(STORAGE_KEY);
+      } catch (e) {}
     }
+
+    if (saved) {
+      try {
+        const parsed = typeof saved === "string" ? JSON.parse(saved) : saved;
+        const merged = deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
+        if (merged.instantRankedLobby) merged.instantRankedLobby.enabled = false;
+        return merged;
+      } catch (e) {}
+    }
+
     return structuredClone(DEFAULT_CONFIG);
   };
 
   const saveConfig = (config) => {
+    const serialized = JSON.stringify(config);
     try {
       if (window.DataStore && typeof window.DataStore.set === "function") {
-        window.DataStore.set(STORAGE_KEY, JSON.stringify(config));
+        window.DataStore.set(STORAGE_KEY, serialized);
       }
-    } catch (e) {
-      console.warn("[SoloQMachine] Ayarlar kaydedilemedi:", e);
-    }
+    } catch (e) {}
+
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (e) {}
   };
 
   let CONFIG = loadConfig();
