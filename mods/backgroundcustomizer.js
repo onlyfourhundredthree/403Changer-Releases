@@ -196,8 +196,10 @@
         const data = await res.json();
         if (Array.isArray(data)) {
           communityThemesList = data;
-          if (currentTab === "explore") {
-            renderExploreTab();
+          if (modalElement && modalElement.classList.contains("c403-open")) {
+            if (currentTab === "explore") {
+              renderExploreTab();
+            }
           }
         }
       }
@@ -295,7 +297,7 @@
         position: fixed;
         inset: 0;
         z-index: 2147483647 !important;
-        display: none;
+        display: none !important;
         align-items: center;
         justify-content: center;
         background: rgba(0, 0, 0, 0.78);
@@ -1167,6 +1169,7 @@
 
       modal = document.createElement("div");
     modal.id = MODAL_ID;
+    modal.style.setProperty("display", "none", "important");
     modal.innerHTML = `
       <div class="c403-bg-box">
         <!-- Başlık -->
@@ -1880,7 +1883,7 @@
     const modal = document.getElementById(MODAL_ID) || modalElement;
     if (modal) {
       modal.classList.remove("c403-open");
-      modal.style.display = "none";
+      modal.style.setProperty("display", "none", "important");
       modal.style.opacity = "0";
       modal.style.pointerEvents = "none";
       const drawer = modal.querySelector("#c403-bg-drawer");
