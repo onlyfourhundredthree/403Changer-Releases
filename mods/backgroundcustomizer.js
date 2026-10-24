@@ -15,6 +15,14 @@
   if (window.__c403BackgroundCustomizerLoaded) return;
   window.__c403BackgroundCustomizerLoaded = true;
 
+  // Global BuiltinMods ve konsol erişimi
+  window.__c403ModSettings = window.__c403ModSettings || {};
+  window.__c403ModSettings["backgroundcustomizer"] = () => openModal();
+  window.__c403ModSettings["background_customizer"] = () => openModal();
+  window.c403OpenBackgroundCustomizer = () => openModal();
+  window.addEventListener("c403-open-mod-settings-backgroundcustomizer", () => openModal());
+  window.addEventListener("c403-open-backgroundcustomizer", () => openModal());
+
   const STORAGE_KEY = "c403_bg_customizer_themes_v3";
   const MODAL_ID = "c403-bg-modal";
   const STYLE_ID = "c403-bg-styles";
@@ -286,8 +294,8 @@
       #${MODAL_ID} {
         position: fixed;
         inset: 0;
-        z-index: 2147483640;
-        display: flex;
+        z-index: 2147483647 !important;
+        display: none;
         align-items: center;
         justify-content: center;
         background: rgba(0, 0, 0, 0.78);
@@ -301,8 +309,9 @@
       }
 
       #${MODAL_ID}.c403-open {
-        opacity: 1;
-        pointer-events: auto;
+        display: flex !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
       }
 
       #${MODAL_ID} .c403-bg-box {
@@ -1152,11 +1161,11 @@
   let editingThemeId = null;
 
   function ensureModal() {
-    if (modalElement) return modalElement;
+    let modal = document.getElementById(MODAL_ID);
+    if (!modal) {
+      injectStyles();
 
-    injectStyles();
-
-    const modal = document.createElement("div");
+      modal = document.createElement("div");
     modal.id = MODAL_ID;
     modal.innerHTML = `
       <div class="c403-bg-box">
@@ -1283,10 +1292,9 @@
       </div>
     `;
 
-    document.body.appendChild(modal);
-    modalElement = modal;
+      modalElement = modal;
 
-    // Kapatma
+      // Kapatma
     modal.querySelector("#c403-bg-close").addEventListener("click", closeModal);
     modal.addEventListener("click", (e) => {
       if (e.target === modal) closeModal();
@@ -1459,7 +1467,12 @@
       updateCounts();
       renderMyThemesTab();
     });
+    }
 
+    if (document.body && !document.body.contains(modal)) {
+      document.body.appendChild(modal);
+    }
+    modalElement = modal;
     return modal;
   }
 
@@ -1475,7 +1488,9 @@
   // --- KEŞFET (Topluluk & Public Kataloğu) RENDER ---
   function renderExploreTab() {
     const modal = ensureModal();
+    if (!modal) return;
     const grid = modal.querySelector("#c403-explore-grid");
+    if (!grid) return;
     grid.innerHTML = "";
 
     // 1. Resmi temalar ve Canlı Topluluk temalarını birleştir
@@ -1593,7 +1608,9 @@
   // --- TEMALARIM RENDER ---
   function renderMyThemesTab() {
     const modal = ensureModal();
+    if (!modal) return;
     const list = modal.querySelector("#c403-my-list");
+    if (!list) return;
     list.innerHTML = "";
 
     let filtered = currentState.themes;
@@ -1840,23 +1857,43 @@
   }
 
   function openModal() {
-    const modal = ensureModal();
-    updateCounts();
-    renderCurrentTab();
-    fetchLiveCommunityThemes();
-    modal.classList.add("c403-open");
+    try {
+      const modal = ensureModal();
+      if (!modal) return;
+      if (document.body && !document.body.contains(modal)) {
+        document.body.appendChild(modal);
+      }
+      modal.classList.add("c403-open");
+      modal.style.display = "flex";
+      modal.style.opacity = "1";
+      modal.style.pointerEvents = "auto";
+
+      try { updateCounts(); } catch (e) { console.warn("[403-BG] updateCounts hatasi:", e); }
+      try { renderCurrentTab(); } catch (e) { console.warn("[403-BG] renderCurrentTab hatasi:", e); }
+      try { fetchLiveCommunityThemes(); } catch (e) { console.warn("[403-BG] fetchLiveCommunityThemes hatasi:", e); }
+    } catch (err) {
+      console.error("[403-BG] openModal hatasi:", err);
+    }
   }
 
   function closeModal() {
-    if (modalElement) {
-      modalElement.classList.remove("c403-open");
-      const drawer = modalElement.querySelector("#c403-bg-drawer");
+    const modal = document.getElementById(MODAL_ID) || modalElement;
+    if (modal) {
+      modal.classList.remove("c403-open");
+      modal.style.display = "none";
+      modal.style.opacity = "0";
+      modal.style.pointerEvents = "none";
+      const drawer = modal.querySelector("#c403-bg-drawer");
       if (drawer) drawer.classList.remove("open");
     }
   }
 
   // --- Başlatma ---
   function init() {
+    if (!document.body) {
+      window.addEventListener("DOMContentLoaded", init);
+      return;
+    }
     injectStyles();
     applyActiveBackground();
     fetchLiveCommunityThemes();
@@ -1867,7 +1904,9 @@
         applyActiveBackground();
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
 
     window.__c403ModSettings = window.__c403ModSettings || {};
     window.__c403ModSettings["backgroundcustomizer"] = () => openModal();
