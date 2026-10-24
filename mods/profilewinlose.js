@@ -4,7 +4,7 @@
  * @name         ProfileWinLose
  * @author       403Changer
  * @description  Sihirdar profilinde son maçların G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
- * @version      2.0.0
+ * @version      2.1.0
  */
 
 (function () {
@@ -34,7 +34,7 @@
     kdaDisplay: "show",
   };
 
-  // --- Sağlam İki Katmanlı Depolama (DataStore + localStorage) ---
+  // --- İki Katmanlı Kalıcı Depolama (DataStore + localStorage) ---
   const Storage = {
     get(key, fallback = null) {
       try {
@@ -104,101 +104,114 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${CONTAINER_ID} {
-        display: flex !important;
-        justify-content: center !important;
+        display: inline-flex !important;
         align-items: center !important;
-        width: 100% !important;
-        margin: 10px auto 14px auto !important;
-        z-index: 99 !important;
+        width: auto !important;
+        max-width: fit-content !important;
+        margin: 0 0 0 16px !important;
+        padding: 0 !important;
+        z-index: 100 !important;
         position: relative !important;
         pointer-events: auto !important;
+        flex: 0 0 auto !important;
+        align-self: center !important;
+        vertical-align: middle !important;
       }
 
       .c403-pwl-pill {
         display: inline-flex;
-        flex-direction: column;
+        flex-direction: row;
         align-items: center;
-        gap: 5px;
-        padding: 7px 18px 9px;
-        background: radial-gradient(120% 100% at 50% 0%, rgba(200, 170, 110, 0.16), rgba(10, 16, 24, 0.92));
+        gap: 12px;
+        padding: 6px 14px;
+        background: radial-gradient(120% 100% at 50% 0%, rgba(200, 170, 110, 0.16), rgba(10, 16, 24, 0.94));
         border: 1px solid rgba(200, 170, 110, 0.45);
-        border-radius: 20px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        border-radius: 5px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.08);
         backdrop-filter: blur(8px);
         font-family: "Beaufort for LOL", "Segoe UI", sans-serif;
         user-select: none;
-        transition: transform 0.2s ease, border-color 0.2s ease;
+        white-space: nowrap;
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        cursor: pointer;
       }
 
       .c403-pwl-pill:hover {
         transform: translateY(-1px);
-        border-color: rgba(200, 170, 110, 0.8);
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.8), 0 0 14px rgba(200, 170, 110, 0.3);
+        border-color: rgba(200, 170, 110, 0.85);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.8), 0 0 12px rgba(200, 170, 110, 0.3);
+      }
+
+      .c403-pwl-meta {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
       }
 
       .c403-pwl-queue {
         font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
+        font-weight: 800;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
         color: #c8aa6e;
-        text-shadow: 0 0 8px rgba(200, 170, 110, 0.4);
+      }
+
+      .c403-pwl-count {
+        font-size: 9.5px;
+        color: rgba(205, 190, 145, 0.65);
+        letter-spacing: 0.02em;
+      }
+
+      .c403-pwl-divider {
+        width: 1px;
+        height: 22px;
+        background: rgba(200, 170, 110, 0.28);
       }
 
       .c403-pwl-row {
         display: flex;
         align-items: center;
-        gap: 12px;
-        font-size: 14px;
+        gap: 8px;
+        font-size: 12px;
         font-weight: 700;
-        letter-spacing: 0.03em;
       }
 
       .c403-pwl-wins {
         color: #0acbe6;
-        text-shadow: 0 0 8px rgba(10, 203, 230, 0.5);
+        text-shadow: 0 0 8px rgba(10, 203, 230, 0.4);
       }
 
       .c403-pwl-losses {
-        color: #ff4b4b;
-        text-shadow: 0 0 8px rgba(255, 75, 75, 0.5);
+        color: #e84057;
+        text-shadow: 0 0 8px rgba(232, 64, 87, 0.4);
       }
 
       .c403-pwl-winrate {
         color: #f0e6d2;
-        font-weight: 800;
-        text-shadow: 0 0 8px rgba(240, 230, 210, 0.3);
+        padding: 1px 6px;
+        background: rgba(200, 170, 110, 0.15);
+        border: 1px solid rgba(200, 170, 110, 0.35);
+        border-radius: 3px;
+        font-size: 11px;
       }
 
       .c403-pwl-kda {
-        color: #e8c887;
-        font-size: 13px;
-        padding-left: 8px;
-        border-left: 1px solid rgba(200, 170, 110, 0.3);
+        color: #f0e6d2;
+        font-size: 11px;
+        opacity: 0.88;
       }
 
-      .c403-pwl-loading {
-        font-size: 12px;
-        color: #c8aa6e;
-        letter-spacing: 0.05em;
-        animation: c403PwlPulse 1.4s ease-in-out infinite;
-      }
-
-      .c403-pwl-error {
-        font-size: 12px;
-        color: rgba(228, 139, 139, 0.85);
-      }
-
-      @keyframes c403PwlPulse {
-        0%, 100% { opacity: 0.45; }
-        50% { opacity: 1; }
+      .c403-pwl-loading, .c403-pwl-error {
+        font-size: 11px;
+        color: rgba(205, 190, 145, 0.7);
+        letter-spacing: 0.03em;
       }
 
       /* Ayarlar Modalı */
       #${MODAL_ID} {
         position: fixed;
         inset: 0;
-        z-index: 2147483640;
+        z-index: 2147483647 !important;
         display: none;
         align-items: center;
         justify-content: center;
@@ -210,84 +223,85 @@
       }
 
       #${MODAL_ID}.c403-open {
-        display: flex;
+        display: flex !important;
       }
 
-      #${MODAL_ID} .c403-pwl-dialog {
+      .c403-pwl-dialog {
         width: 440px;
-        background: radial-gradient(120% 90% at 50% -20%, rgba(200, 170, 110, 0.12), transparent 60%),
-                    linear-gradient(180deg, #0d141b 0%, #06090d 100%);
+        max-width: 90vw;
+        background: radial-gradient(120% 90% at 50% -20%, rgba(200, 170, 110, 0.14), transparent 65%),
+                    linear-gradient(180deg, #0e151d 0%, #06090d 100%);
         border: 1px solid rgba(200, 170, 110, 0.45);
         border-radius: 8px;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.06);
         overflow: hidden;
       }
 
-      #${MODAL_ID} .c403-pwl-head {
+      .c403-pwl-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 16px 20px;
-        border-bottom: 1px solid rgba(200, 170, 110, 0.2);
+        padding: 14px 20px;
         background: rgba(0, 0, 0, 0.35);
+        border-bottom: 1px solid rgba(200, 170, 110, 0.2);
       }
 
-      #${MODAL_ID} .c403-pwl-head-left {
+      .c403-pwl-head-left {
         display: flex;
         align-items: center;
         gap: 12px;
       }
 
-      #${MODAL_ID} .c403-pwl-logo {
-        width: 36px;
-        height: 36px;
+      .c403-pwl-logo {
+        width: 32px;
+        height: 32px;
         background: url("/asset/logo.png") center / contain no-repeat;
         filter: drop-shadow(0 0 8px rgba(200, 170, 110, 0.6));
       }
 
-      #${MODAL_ID} .c403-pwl-titles h2 {
+      .c403-pwl-titles h2 {
         margin: 0;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 800;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.06em;
         color: #f0e6d2;
         text-transform: uppercase;
       }
 
-      #${MODAL_ID} .c403-pwl-titles span {
-        font-size: 11px;
+      .c403-pwl-titles span {
+        font-size: 10.5px;
         color: rgba(205, 190, 145, 0.7);
       }
 
-      #${MODAL_ID} .c403-pwl-close {
+      .c403-pwl-close {
         background: none;
         border: none;
         color: #a09b8c;
-        font-size: 20px;
+        font-size: 18px;
         cursor: pointer;
         padding: 4px 8px;
         transition: color 0.15s;
       }
 
-      #${MODAL_ID} .c403-pwl-close:hover {
+      .c403-pwl-close:hover {
         color: #f0e6d2;
       }
 
-      #${MODAL_ID} .c403-pwl-body {
-        padding: 18px 20px;
+      .c403-pwl-body {
+        padding: 20px;
         display: flex;
         flex-direction: column;
         gap: 16px;
       }
 
-      .c403-pwl-field {
+      .c403-pwl-group {
         display: flex;
         flex-direction: column;
         gap: 6px;
       }
 
-      .c403-pwl-field label {
-        font-size: 12px;
+      .c403-pwl-group label {
+        font-size: 11.5px;
         font-weight: 700;
         color: #cdbe91;
       }
@@ -340,6 +354,7 @@
     constructor() {
       this.observer = null;
       this.currentPuuid = null;
+      this.pollTimer = null;
       this.requestId = 0;
       this.disposed = false;
       this.init();
@@ -350,12 +365,21 @@
       injectStyles();
       this.observeProfile();
       this.checkAndRender();
+
+      // İkincil hafif kontrol (Riot sekme geçişlerinde mutation observer tetiklenmezse)
+      this.pollTimer = setInterval(() => {
+        if (!this.disposed) {
+          this.checkAndRender();
+        }
+      }, 1200);
+
       window.addEventListener("unload", () => this.cleanup());
     }
 
     cleanup() {
       this.disposed = true;
       if (this.observer) this.observer.disconnect();
+      if (this.pollTimer) clearInterval(this.pollTimer);
       const el = document.getElementById(CONTAINER_ID);
       if (el) el.remove();
       cache.clear();
@@ -371,12 +395,53 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["puuid", "is-searched", "data-screen-name"],
+        attributeFilter: ["puuid", "is-searched", "data-screen-name", "class"],
       });
     }
 
+    async findProfilePuuid(profileRoot) {
+      // 1. Profil konteyneri içindeki tüm regalia ve puuid elemanları
+      const candidates = [];
+      if (profileRoot) {
+        candidates.push(profileRoot);
+        const inside = profileRoot.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid], [data-puuid]");
+        inside.forEach((el) => candidates.push(el));
+      }
+
+      document.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid]").forEach((el) => candidates.push(el));
+
+      // Öncelik: is-searched="true" olan veya doğrudan puuid taşıyan eleman
+      for (const el of candidates) {
+        if (el.getAttribute?.("is-searched") === "true") {
+          const val = el.getAttribute?.("puuid") || el.puuid || el.dataset?.puuid;
+          if (typeof val === "string" && val.length > 20) return val;
+        }
+      }
+
+      for (const el of candidates) {
+        const val = el.getAttribute?.("puuid") || el.puuid || el.dataset?.puuid || el.getAttribute?.("data-puuid");
+        if (typeof val === "string" && val.length > 20) return val;
+      }
+
+      // 2. URL route / hash kontrolü (#/profile/UUID...)
+      const hash = window.location.hash || "";
+      const match = hash.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+      if (match) return match[0];
+
+      // 3. Geçerli kullanıcı (kendi profilinde bakıyorsa)
+      try {
+        const res = await fetch("/lol-summoner/v1/current-summoner");
+        if (res.ok) {
+          const me = await res.json();
+          if (me && me.puuid) return me.puuid;
+        }
+      } catch (e) {}
+
+      return null;
+    }
+
     async checkAndRender() {
-      // Profil ekranının açık olup olmadığını kontrol et
+      // Profil ekranının aktif olup olmadığını kontrol et
       const profileRoot =
         document.querySelector('[data-screen-name="rcp-fe-lol-profiles-main"]') ||
         document.querySelector("rcp-fe-lol-profiles") ||
@@ -391,35 +456,13 @@
         return;
       }
 
-      // PUUID'yi DOM'dan veya LCU'dan al
-      let puuid = null;
-      const profileElements = document.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element");
-      for (const el of profileElements) {
-        if (el.getAttribute("is-searched") === "true" && el.getAttribute("puuid")) {
-          puuid = el.getAttribute("puuid");
-          break;
-        }
-      }
-
-      if (!puuid && profileElements.length > 0) {
-        puuid = profileElements[0].getAttribute("puuid");
-      }
-
-      // Eğer DOM'da puuid yoksa geçerli sihirdardan çek
-      if (!puuid) {
-        try {
-          const res = await fetch("/lol-summoner/v1/current-summoner");
-          if (res.ok) {
-            const me = await res.json();
-            puuid = me.puuid;
-          }
-        } catch (e) {}
-      }
-
+      const puuid = await this.findProfilePuuid(profileRoot);
       if (!puuid) return;
 
       const container = document.getElementById(CONTAINER_ID);
-      if (puuid !== this.currentPuuid || !container || !document.contains(container)) {
+      const isDetached = !container || !document.body.contains(container);
+
+      if (puuid !== this.currentPuuid || isDetached) {
         this.currentPuuid = puuid;
         this.attachContainer(profileRoot);
         this.fetchAndRender(puuid);
@@ -433,18 +476,30 @@
         container.id = CONTAINER_ID;
       }
 
-      const anchor =
-        document.querySelector(".style-profile-summoner-status-icons") ||
-        document.querySelector(".style-profile-sub-nav-component") ||
-        document.querySelector(".summoner-level-ring") ||
-        document.querySelector(".style-profile-overview-component") ||
-        profileRoot;
+      // Kullanıcı talebi: Tam profil isminin hemen sağında yer alsın
+      const nameAndTitle = document.querySelector(".style-profile-name-and-title");
+      const summonerInfo = document.querySelector(".style-profile-summoner-info-component");
+      const statusIcons = document.querySelector(".style-profile-summoner-status-icons");
+      const regalia = document.querySelector("lol-regalia-profile-v2-element");
+      const subNav = document.querySelector(".style-profile-sub-nav-component");
+      const overview = document.querySelector(".style-profile-overview-component");
 
-      if (anchor && anchor.parentNode && anchor !== profileRoot) {
-        anchor.parentNode.insertBefore(container, anchor.nextSibling);
-      } else {
-        profileRoot.appendChild(container);
+      if (nameAndTitle && nameAndTitle.parentNode) {
+        nameAndTitle.parentNode.insertBefore(container, nameAndTitle.nextSibling);
+      } else if (statusIcons && statusIcons.parentNode) {
+        statusIcons.parentNode.insertBefore(container, statusIcons.nextSibling);
+      } else if (summonerInfo) {
+        summonerInfo.appendChild(container);
+      } else if (regalia && regalia.parentNode) {
+        regalia.parentNode.insertBefore(container, regalia.nextSibling);
+      } else if (subNav && subNav.parentNode) {
+        subNav.parentNode.insertBefore(container, subNav);
+      } else if (overview) {
+        overview.prepend(container);
+      } else if (profileRoot) {
+        profileRoot.prepend(container);
       }
+
       return container;
     }
 
@@ -467,12 +522,15 @@
         stats = cache.get(cacheKey).data;
       } else {
         try {
-          const endpoint = `/lol-match-history/v1/products/lol/${puuid}/matches?begIndex=0&endIndex=${gamesCount - 1}`;
+          const endpoint = `/lol-match-history/v1/products/lol/${encodeURIComponent(puuid)}/matches?begIndex=0&endIndex=${gamesCount - 1}`;
           const res = await fetch(endpoint);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const json = await res.json();
-          stats = this.computeStats(json, puuid);
-          cache.set(cacheKey, { data: stats, time: Date.now() });
+          if (res.ok) {
+            const json = await res.json();
+            stats = this.computeStats(json, puuid);
+            cache.set(cacheKey, { data: stats, time: Date.now() });
+          } else {
+            console.warn(`[ProfileWinLose] Maç geçmişi HTTP ${res.status}`);
+          }
         } catch (err) {
           console.warn("[ProfileWinLose] Maç geçmişi alınamadı:", err);
         }
@@ -480,19 +538,32 @@
 
       if (this.disposed || curReq !== this.requestId || this.currentPuuid !== puuid) return;
 
+      const queueName = QUEUE_TYPES[CONFIG.selectedQueue]?.name || "Tüm Modlar";
+
       if (!stats) {
         container.innerHTML = `
-          <div class="c403-pwl-pill">
-            <span class="c403-pwl-error">İstatistikler alınamadı</span>
+          <div class="c403-pwl-pill" title="Tıkla: Ayarları Aç" style="cursor: pointer;">
+            <div class="c403-pwl-meta">
+              <span class="c403-pwl-queue">${queueName}</span>
+              <span class="c403-pwl-count">Kayıt Bulunamadı</span>
+            </div>
+            <div class="c403-pwl-divider"></div>
+            <div class="c403-pwl-row">
+              <span style="color: rgba(205,190,145,0.7); font-size: 11px;">0 Maç</span>
+            </div>
           </div>
         `;
+        container.querySelector(".c403-pwl-pill")?.addEventListener("click", () => openModal());
         return;
       }
 
-      const queueName = QUEUE_TYPES[CONFIG.selectedQueue]?.name || "Tüm Modlar";
       container.innerHTML = `
-        <div class="c403-pwl-pill" title="Tıkla: Mod Ayarlarını Aç" style="cursor: pointer;">
-          <span class="c403-pwl-queue">${queueName} (${stats.totalGames} Maç)</span>
+        <div class="c403-pwl-pill" title="Tıkla: Mod Ayarlarını Aç">
+          <div class="c403-pwl-meta">
+            <span class="c403-pwl-queue">${queueName}</span>
+            <span class="c403-pwl-count">${stats.totalGames} Maç</span>
+          </div>
+          <div class="c403-pwl-divider"></div>
           <div class="c403-pwl-row">
             <span class="c403-pwl-wins">${stats.wins}G</span>
             <span class="c403-pwl-losses">${stats.losses}M</span>
@@ -531,23 +602,32 @@
       let totalAssists = 0;
 
       for (const game of slice) {
-        const ident = game.participantIdentities?.find((entry) => entry.player?.puuid === puuid);
-        const player = ident
-          ? game.participants?.find((p) => p.participantId === ident.participantId)
-          : (game.participants?.length === 1 ? game.participants[0] : null);
+        let player = game.participants?.find((p) => p.puuid === puuid);
+        if (!player) {
+          const ident = game.participantIdentities?.find((entry) => entry.player?.puuid === puuid);
+          if (ident) {
+            player = game.participants?.find((p) => p.participantId === ident.participantId);
+          }
+        }
+        if (!player && game.participants?.length === 1) {
+          player = game.participants[0];
+        }
+        if (!player) continue;
 
-        if (!player?.stats) continue;
-
+        const stats = player.stats || player;
         const team = game.teams?.find((t) => t.teamId === player.teamId) ||
           game.teams?.[player.teamId === 100 ? 0 : 1];
-        const teamWin = typeof player.stats.win === "boolean" ? player.stats.win : team?.win === "Win";
 
-        if (teamWin) wins++;
+        const isWin = typeof stats.win === "boolean"
+          ? stats.win
+          : (typeof stats.win === "string" ? stats.win.toLowerCase() === "win" : (team?.win === "Win" || team?.win === true));
+
+        if (isWin) wins++;
         else losses++;
 
-        totalKills += player.stats.kills || 0;
-        totalDeaths += player.stats.deaths || 0;
-        totalAssists += player.stats.assists || 0;
+        totalKills += Number(stats.kills || 0);
+        totalDeaths += Number(stats.deaths || 0);
+        totalAssists += Number(stats.assists || 0);
       }
 
       const totalGames = wins + losses;
@@ -565,103 +645,129 @@
   let modalEl = null;
 
   function ensureModal() {
-    if (modalEl) return modalEl;
+    let modal = document.getElementById(MODAL_ID);
+    if (!modal) {
+      injectStyles();
+      modal = document.createElement("div");
+      modal.id = MODAL_ID;
+      modal.innerHTML = `
+        <div class="c403-pwl-dialog">
+          <div class="c403-pwl-head">
+            <div class="c403-pwl-head-left">
+              <div class="c403-pwl-logo"></div>
+              <div class="c403-pwl-titles">
+                <h2>Profil Galibiyet/Mağlubiyet</h2>
+                <span>403Changer İstatistik Ayarları</span>
+              </div>
+            </div>
+            <button type="button" class="c403-pwl-close" id="c403-pwl-close-btn">✕</button>
+          </div>
 
-    injectStyles();
+          <div class="c403-pwl-body">
+            <div class="c403-pwl-group">
+              <label>Takip Edilecek Sıra Türü</label>
+              <select class="c403-pwl-select" id="c403-pwl-queue-sel">
+                <option value="solo">Dereceli Tek/Çift</option>
+                <option value="flex">Dereceli Esnek</option>
+                <option value="normal">Normal (Sıralı/Seçimli)</option>
+                <option value="aram">ARAM</option>
+                <option value="arena">Arena</option>
+                <option value="quickplay">Hızlı Oyun</option>
+                <option value="all">Tüm Modlar</option>
+              </select>
+            </div>
 
-    const modal = document.createElement("div");
-    modal.id = MODAL_ID;
-    modal.innerHTML = `
-      <div class="c403-pwl-dialog">
-        <div class="c403-pwl-head">
-          <div class="c403-pwl-head-left">
-            <div class="c403-pwl-logo"></div>
-            <div class="c403-pwl-titles">
-              <h2>Profil Galibiyet/Mağlubiyet</h2>
-              <span>403Changer İstatistik Takipçisi</span>
+            <div class="c403-pwl-group">
+              <label>Hesaplanacak Son Maç Sayısı (1 - 200)</label>
+              <input type="number" class="c403-pwl-input" id="c403-pwl-count-inp" min="1" max="200" value="40" />
+            </div>
+
+            <div class="c403-pwl-group">
+              <label>KDA Oranı Gösterimi</label>
+              <select class="c403-pwl-select" id="c403-pwl-kda-sel">
+                <option value="show">Göster</option>
+                <option value="hide">Gizle</option>
+              </select>
             </div>
           </div>
-          <button type="button" class="c403-pwl-close" id="c403-pwl-close-btn">✕</button>
-        </div>
 
-        <div class="c403-pwl-body">
-          <div class="c403-pwl-field">
-            <label>Hesaplanacak Sıra Modu</label>
-            <select class="c403-pwl-select" id="c403-pwl-queue-sel">
-              <option value="solo">Dereceli Tek/Çift</option>
-              <option value="flex">Dereceli Esnek</option>
-              <option value="all">Tüm Modlar</option>
-              <option value="normal">Normal (Sıralı/Seçimli)</option>
-              <option value="aram">ARAM</option>
-              <option value="arena">Arena</option>
-              <option value="quickplay">Hızlı Oyun</option>
-            </select>
-          </div>
-
-          <div class="c403-pwl-field">
-            <label>Son Kaç Maç Hesaplansın? (1 - 200)</label>
-            <input type="number" class="c403-pwl-input" id="c403-pwl-count-inp" min="1" max="200" value="40" />
-          </div>
-
-          <div class="c403-pwl-field">
-            <label>KDA Oranı Gösterilsin mi?</label>
-            <select class="c403-pwl-select" id="c403-pwl-kda-sel">
-              <option value="show">Göster</option>
-              <option value="hide">Gizle</option>
-            </select>
+          <div class="c403-pwl-foot">
+            <button type="button" class="c403-pwl-btn" id="c403-pwl-save-btn">Kaydet ve Uygula</button>
           </div>
         </div>
+      `;
 
-        <div class="c403-pwl-foot">
-          <button type="button" class="c403-pwl-btn" id="c403-pwl-save-btn">Kaydet</button>
-        </div>
-      </div>
-    `;
+      modal.querySelector("#c403-pwl-close-btn").addEventListener("click", closeModal);
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+      });
 
-    document.body.appendChild(modal);
+      modal.querySelector("#c403-pwl-save-btn").addEventListener("click", () => {
+        const qSel = modal.querySelector("#c403-pwl-queue-sel").value;
+        const cInp = parseInt(modal.querySelector("#c403-pwl-count-inp").value, 10);
+        const kSel = modal.querySelector("#c403-pwl-kda-sel").value;
+
+        CONFIG.selectedQueue = QUEUE_TYPES[qSel] ? qSel : "solo";
+        CONFIG.gamesCount = Math.min(200, Math.max(1, isNaN(cInp) ? 40 : cInp));
+        CONFIG.kdaDisplay = kSel === "hide" ? "hide" : "show";
+
+        saveSettings();
+        cache.clear();
+
+        if (window.__c403ProfileWinLoseInstance && window.__c403ProfileWinLoseInstance.currentPuuid) {
+          window.__c403ProfileWinLoseInstance.fetchAndRender(window.__c403ProfileWinLoseInstance.currentPuuid);
+        }
+
+        closeModal();
+      });
+    }
+
+    if (document.body && !document.body.contains(modal)) {
+      document.body.appendChild(modal);
+    }
+
     modalEl = modal;
-
-    modal.querySelector("#c403-pwl-close-btn").addEventListener("click", closeModal);
-    modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeModal();
-    });
-
-    modal.querySelector("#c403-pwl-save-btn").addEventListener("click", () => {
-      const q = modal.querySelector("#c403-pwl-queue-sel").value;
-      const count = Math.min(200, Math.max(1, parseInt(modal.querySelector("#c403-pwl-count-inp").value, 10) || 40));
-      const kda = modal.querySelector("#c403-pwl-kda-sel").value;
-
-      CONFIG.selectedQueue = q;
-      CONFIG.gamesCount = count;
-      CONFIG.kdaDisplay = kda;
-
-      saveSettings();
-      closeModal();
-      cache.clear();
-
-      if (window.__c403ProfileWinLoseInstance) {
-        window.__c403ProfileWinLoseInstance.checkAndRender();
-      }
-    });
-
     return modal;
   }
 
   function openModal() {
     loadSettings();
     const modal = ensureModal();
-    modal.querySelector("#c403-pwl-queue-sel").value = CONFIG.selectedQueue;
-    modal.querySelector("#c403-pwl-count-inp").value = CONFIG.gamesCount;
-    modal.querySelector("#c403-pwl-kda-sel").value = CONFIG.kdaDisplay;
+    if (!modal) return;
+    if (!document.body.contains(modal)) {
+      document.body.appendChild(modal);
+    }
+    const qSel = modal.querySelector("#c403-pwl-queue-sel");
+    const cInp = modal.querySelector("#c403-pwl-count-inp");
+    const kSel = modal.querySelector("#c403-pwl-kda-sel");
+    if (qSel) qSel.value = CONFIG.selectedQueue;
+    if (cInp) cInp.value = CONFIG.gamesCount;
+    if (kSel) kSel.value = CONFIG.kdaDisplay;
     modal.classList.add("c403-open");
+    modal.style.display = "flex";
   }
 
   function closeModal() {
-    if (modalEl) modalEl.classList.remove("c403-open");
+    const modal = document.getElementById(MODAL_ID) || modalEl;
+    if (modal) {
+      modal.classList.remove("c403-open");
+      modal.style.display = "none";
+    }
   }
 
-  // --- Başlatma Mantığı (Anında ve gecikmesiz) ---
+  // --- Global Ayarlar Erişimi (BuiltinMods Paneli İçin) ---
+  window.__c403ModSettings = window.__c403ModSettings || {};
+  window.__c403ModSettings["profilewinlose"] = () => openModal();
+  window.__c403ModSettings["profile_win_lose"] = () => openModal();
+  window.c403OpenProfileWinLoseSettings = () => openModal();
+  window.addEventListener("c403-open-mod-settings-profilewinlose", () => openModal());
+
+  // --- Başlatma Mantığı ---
   function startTracker() {
+    if (!document.body) {
+      window.addEventListener("DOMContentLoaded", startTracker);
+      return;
+    }
     if (!window.__c403ProfileWinLoseInstance) {
       window.__c403ProfileWinLoseInstance = new ProfileWinLoseTracker();
     }
@@ -673,11 +779,6 @@
     window.addEventListener("DOMContentLoaded", startTracker);
     window.addEventListener("load", startTracker);
   }
-
-  window.__c403ModSettings = window.__c403ModSettings || {};
-  window.__c403ModSettings["profilewinlose"] = () => openModal();
-  window.c403OpenProfileWinLoseSettings = () => openModal();
-  window.addEventListener("c403-open-mod-settings-profilewinlose", () => openModal());
 
   console.log("[ProfileWinLose] Mod başarıyla yüklendi ve aktif edildi.");
 })();
