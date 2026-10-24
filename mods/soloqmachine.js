@@ -27,8 +27,6 @@
     removeElements: {
       enabled: false,
       selectors: [
-        ".right-nav-menu",
-        ".left-nav-menu",
         'lol-uikit-navigation-item[item-id="challenges-collection"]',
         'lol-uikit-navigation-item[item-id="profile-main-highlights"]',
         ".social-button",
@@ -69,6 +67,13 @@
         const parsed = typeof saved === "string" ? JSON.parse(saved) : saved;
         const merged = deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
         if (merged.instantRankedLobby) merged.instantRankedLobby.enabled = false;
+        // Kullanici talebi: Otomatik siraya girme kesin olarak devre disi (oyna butonuna basmaz)
+        merged.autoMatchmaking = { enabled: false, delayMs: 0, minimumMembers: 1, waitForInvites: false };
+        if (merged.removeElements && Array.isArray(merged.removeElements.selectors)) {
+          merged.removeElements.selectors = merged.removeElements.selectors.filter(
+            (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
+          );
+        }
         return merged;
       } catch (e) {}
     }
@@ -77,6 +82,12 @@
   };
 
   const saveConfig = (config) => {
+    config.autoMatchmaking = { enabled: false, delayMs: 0, minimumMembers: 1, waitForInvites: false };
+    if (config.removeElements && Array.isArray(config.removeElements.selectors)) {
+      config.removeElements.selectors = config.removeElements.selectors.filter(
+        (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
+      );
+    }
     const serialized = JSON.stringify(config);
     try {
       if (window.DataStore && typeof window.DataStore.set === "function") {
@@ -215,11 +226,21 @@
       }
 
       let extraRules = "";
-      if (CONFIG.removeElements.enabled) {
+      if (CONFIG.removeElements && CONFIG.removeElements.enabled) {
+        const safeSelectors = (CONFIG.removeElements.selectors || []).filter(
+          (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
+        );
         extraRules = [
-          ...CONFIG.removeElements.selectors.map((s) => `${s} { display: none !important; }`),
+          ...safeSelectors.map((s) => `${s} { display: none !important; }`),
           ".custom-game-tournament-code-container { display: none !important; }",
           '[data-soloq-machine-hidden="true"] { display: none !important; }',
+          `/* 403Changer menuleri asla gizlenemez */
+          #c403-nav-btn, .c403-nav-btn, [id^="c403"], [class*="c403"], [id*="c403"], lol-uikit-navigation-item[id^="c403"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+          }`,
         ].join("\n");
       }
 
@@ -507,10 +528,8 @@
     }
 
     scheduleAutoMatchmaking() {
+      // Kesin olarak devre disi: Asla siraya girmez veya oyna butonuna basmaz
       this.cancelAutoMatchmaking();
-      if (!CONFIG.autoMatchmaking.enabled || this._disposed) return;
-      const delay = CONFIG.autoMatchmaking.delayMs || 3000;
-      this._autoMatchmakingTimer = setTimeout(() => this.tryStartMatchmaking(), delay);
     }
 
     cancelAutoMatchmaking() {
@@ -522,34 +541,8 @@
     }
 
     async tryStartMatchmaking() {
-      if (this._matchmakingBusy || this._disposed) return;
-      const revision = this._matchmakingRevision;
-      this._matchmakingBusy = true;
-      try {
-        const lobby = await lcuFetch("/lol-lobby/v2/lobby").catch(() => null);
-        if (!lobby || revision !== this._matchmakingRevision || !CONFIG.autoMatchmaking.enabled) return;
-        if (lobby.localMember?.isLeader !== true || lobby.canStartActivity === false) return;
-
-        const count = lobby.members ? lobby.members.length : 0;
-        if (count < (CONFIG.autoMatchmaking.minimumMembers || 1)) {
-          this._autoMatchmakingTimer = setTimeout(() => this.tryStartMatchmaking(), 2500);
-          return;
-        }
-
-        if (CONFIG.autoMatchmaking.waitForInvites && lobby.invitations) {
-          const pending = lobby.invitations.filter((i) => i.state === "Pending");
-          if (pending.length > 0) {
-            this._autoMatchmakingTimer = setTimeout(() => this.tryStartMatchmaking(), 2500);
-            return;
-          }
-        }
-
-        await lcuFetch("/lol-lobby/v2/lobby/matchmaking/search", "POST");
-      } catch (err) {
-        console.warn("[SoloQMachine] Sıra başlatılamadı:", err);
-      } finally {
-        this._matchmakingBusy = false;
-      }
+      // Kesin olarak devre disi: Asla oyna / mac ara butonuna basmaz
+      return;
     }
 
     scheduleAutoHonor() {
@@ -645,25 +638,7 @@
               <button type="button" class="c403-sq-switch" data-key="autoAccept.muteLoopSound" title="Maç kabul edildiğinde çalan sürekli döngüsel portal sesini susturur"></button>
             </div>
 
-            <div class="c403-sq-row">
-              <span class="c403-sq-label">Otomatik Sıraya Girme</span>
-              <button type="button" class="c403-sq-switch" data-key="autoMatchmaking.enabled"></button>
-            </div>
-
-            <div class="c403-sq-row">
-              <span class="c403-sq-sublabel">Sıraya Girme Gecikmesi (saniye)</span>
-              <input type="number" min="0" max="30" step="0.5" data-key="autoMatchmaking.delaySec">
-            </div>
-
-            <div class="c403-sq-row">
-              <span class="c403-sq-sublabel">Davet Edilenleri Bekle</span>
-              <button type="button" class="c403-sq-switch" data-key="autoMatchmaking.waitForInvites"></button>
-            </div>
-
-            <div class="c403-sq-row">
-              <span class="c403-sq-sublabel">Minimum Lobi Üye Sayısı</span>
-              <input type="number" min="1" max="5" step="1" data-key="autoMatchmaking.minimumMembers">
-            </div>
+            <!-- Otomatik siraya girme kaldirildi: Asla oyna butonuna basmaz -->
           </div>
 
           <!-- Oyun Sonu -->
