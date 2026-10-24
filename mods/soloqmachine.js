@@ -20,10 +20,10 @@
   const DEFAULT_CONFIG = {
     queueId: 420, // Ranked Solo/Duo
     autoAccept: { enabled: true, delayMs: 0, muteLoopSound: false },
-    autoMatchmaking: { enabled: true, delayMs: 3000, minimumMembers: 1, waitForInvites: true },
+    autoMatchmaking: { enabled: false, delayMs: 3000, minimumMembers: 1, waitForInvites: true },
     autoHonor: { enabled: true },
     autoPlayAgain: { enabled: true, delayMs: 2000 },
-    instantRankedLobby: { enabled: true },
+    instantRankedLobby: { enabled: false },
     removeElements: {
       enabled: false,
       selectors: [
@@ -56,7 +56,9 @@
         const saved = window.DataStore.get(STORAGE_KEY);
         if (saved) {
           const parsed = typeof saved === "string" ? JSON.parse(saved) : saved;
-          return deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
+          const merged = deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
+          if (merged.instantRankedLobby) merged.instantRankedLobby.enabled = false;
+          return merged;
         }
       }
     } catch (e) {
@@ -593,36 +595,7 @@
     }
 
     observeDOM() {
-      const check = (root) => {
-        if (!root || !root.querySelectorAll) return;
-        if (CONFIG.instantRankedLobby.enabled) {
-          const btns = [...root.querySelectorAll(".play-button-content")];
-          if (root.matches?.(".play-button-content")) btns.push(root);
-          btns.forEach((btn) => {
-            if (!this._buttonHandlers.has(btn)) {
-              const handler = (e) => {
-                if (CONFIG.instantRankedLobby.enabled) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  lcuFetch("/lol-lobby/v2/lobby", "POST", { queueId: CONFIG.queueId }).catch(() => {});
-                }
-              };
-              btn.addEventListener("click", handler, true);
-              this._buttonHandlers.set(btn, handler);
-            }
-          });
-        }
-      };
-
-      check(document.body);
-      this._observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === 1) check(node);
-          }
-        }
-      });
-      this._observer.observe(document.body, { childList: true, subtree: true });
+      // Oyna butonuna müdahale etme (oyuncunun normal seçim yapabilmesi için devre dışı bırakıldı)
     }
   }
 
@@ -705,10 +678,7 @@
           <div class="c403-sq-section">
             <div class="c403-sq-sec-title">Lobi & Arayüz</div>
 
-            <div class="c403-sq-row">
-              <span class="c403-sq-label">Anında Dereceli Lobisi ("Oyna" butonu)</span>
-              <button type="button" class="c403-sq-switch" data-key="instantRankedLobby.enabled"></button>
-            </div>
+
 
             <div class="c403-sq-row">
               <span class="c403-sq-label">Dikkat Dağıtıcı Menüleri Gizle</span>
