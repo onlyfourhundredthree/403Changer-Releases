@@ -390,7 +390,7 @@
     }
 
     const screens = document.querySelectorAll(
-      '[data-screen-name="rcp-fe-lol-profiles-main"], rcp-fe-lol-profiles'
+      '[data-screen-name^="rcp-fe-lol-profiles"], rcp-fe-lol-profiles'
     );
     for (const screen of screens) {
       if (isRendered(screen)) return screen;
