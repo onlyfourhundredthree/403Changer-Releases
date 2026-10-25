@@ -234,16 +234,7 @@
           ...safeSelectors.map((s) => `${s} { display: none !important; }`),
           ".custom-game-tournament-code-container { display: none !important; }",
           '[data-soloq-machine-hidden="true"] { display: none !important; }',
-          `/* 403Changer navbar ve marka butonlari asla gizlenemez */
-          #c403-nav-btn,
-          .c403-nav-btn,
-          #c403-brand-menu,
-          .c403-brand-menu {
-            display: flex !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            pointer-events: auto !important;
-          }`,
+          '#c403-nav-btn, .c403-nav-btn, lol-uikit-navigation-item.menu_item_Golden, .menu_item_Golden { display: flex !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; }',
         ].join("\n");
       }
 
