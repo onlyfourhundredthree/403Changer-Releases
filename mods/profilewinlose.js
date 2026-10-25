@@ -669,9 +669,14 @@
       }
 
       // Riot'un isim altındaki challenge rozetleri yerinde kalsın; bizim
-      // pill onların altına, aynı sütunun içine yerleşsin.
+      // pill onların altına, aynı sütunun içine yerleşsin.  Rozetler ikon
+      // olduğu için metin kontrolü yetmez, çocuk düğüm varlığına bakıyoruz.
       const flair = host.querySelector(".profile-challenge-banner-tokens");
-      if (flair && isRendered(flair) && (flair.innerText || "").trim()) {
+      if (
+        flair &&
+        isRendered(flair) &&
+        (flair.childElementCount > 0 || (flair.textContent || "").trim())
+      ) {
         const flairRect = flair.getBoundingClientRect();
         if (flairRect.height >= 2) {
           top = Math.max(top, flairRect.bottom - hostRect.top + 6);
