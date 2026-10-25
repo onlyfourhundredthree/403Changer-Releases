@@ -5,7 +5,7 @@
  * @author       403Changer
  * @description  Sihirdar profilinde kullanıcının isminin tam altında son maçların
  *               G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
- * @version      2.4.1
+ * @version      2.4.2
  */
 
 (function () {
@@ -110,25 +110,41 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
+      /* The profile column (.style-profile-summoner-info-component) is
+         position:relative and every child inside it is absolutely positioned.
+         A static child would land at the top of the column (or off the
+         bottom), which is why the pill used to appear in a random spot. */
       #${CONTAINER_ID} {
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: center !important;
-        flex: 0 0 auto !important;
-        width: 100% !important;
-        max-width: 100% !important;
+        position: absolute !important;
+        /* JS sets the real value from the summoner name's position; this is
+           only a fallback for the first frame.  No !important here, otherwise
+           the inline value computed by positionContainer() would be ignored. */
+        top: 400px;
+        left: 4px !important;
+        right: 4px !important;
+        bottom: auto !important;
+        width: auto !important;
+        height: auto !important;
+        max-width: none !important;
         min-width: 0 !important;
         box-sizing: border-box !important;
-        margin-top: 8px !important;
-        margin-bottom: 4px !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: flex-start !important;
+        justify-content: flex-start !important;
+        margin: 0 !important;
         padding: 0 !important;
-        /* Static on purpose: an absolutely positioned / z-indexed pill could
-           float over the client (for example the Play button) when the
-           profile screen was hidden but still mounted. */
-        position: static !important;
-        z-index: auto !important;
+        z-index: 10 !important;
+        /* Only the pill itself is clickable; the empty area around it lets
+           clicks through to the client UI. */
+        pointer-events: none !important;
+      }
+
+      #${CONTAINER_ID} .c403-pwl-pill {
         pointer-events: auto !important;
-        clear: both !important;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
       }
 
       .c403-pwl-pill {
@@ -405,41 +421,33 @@
     return null;
   }
 
-  function findProfileAnchor(screen) {
-    if (!screen) return null;
-
+  // Profil ekranındaki isim/ikon sütununu bul. Bu sütun position:relative
+  // olduğu için rozeti mutlak konumla ismin hemen altına koyabiliyoruz.
+  function findProfileHost(screen) {
     const selectors = [
-      ".style-profile-name-and-title",
       ".style-profile-summoner-info-component",
-      "lol-regalia-identity-v2-element",
       "lol-regalia-profile-v2-element",
     ];
 
-    // Önce profil ekranının içinde ara; bazı istemci sürümlerinde isim bloğu
-    // ekran elementinin dışında kalıyor, o yüzden görünür ekran şartıyla
-    // belge genelinde ikinci bir tur atıyoruz.
     for (const root of [screen, document]) {
       for (const selector of selectors) {
-        const nodes = root.querySelectorAll(selector);
+        let nodes;
+        try {
+          nodes = root.querySelectorAll(selector);
+        } catch (e) {
+          continue;
+        }
         for (const node of nodes) {
-          if (!isRendered(node) || !node.parentElement) continue;
+          if (!isRendered(node)) continue;
 
-          // İsim bloğu yatay bir flex satırının içindeyse rozeti o satırın
-          // altına, satırın kendisinden sonra koy (ismin hemen altı).
-          let anchor = node;
-          const parent = node.parentElement;
-          const parentStyle = window.getComputedStyle(parent);
-          if (
-            parentStyle &&
-            parentStyle.display.includes("flex") &&
-            (parentStyle.flexDirection || "").startsWith("row")
-          ) {
-            if (parent.parentElement) anchor = parent;
+          if (selector === "lol-regalia-profile-v2-element") {
+            const column =
+              node.closest(".style-profile-summoner-info-component") ||
+              node.parentElement;
+            if (column && isRendered(column)) return column;
           }
 
-          if (anchor.parentElement && isRendered(anchor.parentElement)) {
-            return anchor;
-          }
+          return node;
         }
       }
     }
@@ -451,7 +459,7 @@
   class ProfileWinLoseTracker {
     constructor() {
       this.currentPuuid = null;
-      this.currentAnchor = null;
+      this.currentHost = null;
       this.pollTimer = null;
       this.requestId = 0;
       this.disposed = false;
@@ -552,7 +560,9 @@
 
       // 4. Sadece gerçekten kendi profilimizdeyse kendi puuid'imize dön.
       //    Başka birinin profilinde yanlışlıkla kendi istatistiklerimizi göstermeyelim.
-      const nameEl = profileRoot?.querySelector?.(".style-profile-name-and-title");
+      const nameEl = profileRoot?.querySelector?.(
+        ".style-profile-summoner-name, .style-profile-summoner-namings-component"
+      );
       const shownName = (nameEl?.innerText || nameEl?.textContent || "").toLowerCase();
       if (cachedCurrentSummonerName && shownName.includes(cachedCurrentSummonerName.toLowerCase())) {
         return cachedCurrentSummonerPuuid;
@@ -575,8 +585,8 @@
           return;
         }
 
-        const anchor = findProfileAnchor(profileScreen);
-        if (!anchor) {
+        const host = findProfileHost(profileScreen);
+        if (!host) {
           this.removeContainer();
           return;
         }
@@ -589,19 +599,19 @@
 
         const container = document.getElementById(CONTAINER_ID);
 
-        // PUUID ve konum aynıysa hiçbir şey yapma (CPU sıfır)
+        // PUUID ve konum aynıysa sadece konumu tazele (CPU sıfıra yakın)
         if (
           container &&
           this.currentPuuid === puuid &&
-          this.currentAnchor === anchor &&
-          container.parentElement === anchor.parentElement &&
-          container.previousElementSibling === anchor
+          this.currentHost === host &&
+          container.parentElement === host
         ) {
+          this.positionContainer(host, container);
           return;
         }
 
         this.currentPuuid = puuid;
-        this.attachContainer(anchor);
+        this.attachContainer(host);
         this.fetchAndRender(puuid);
       } finally {
         this._resolving = false;
@@ -611,29 +621,64 @@
     removeContainer() {
       const container = document.getElementById(CONTAINER_ID);
       if (container) container.remove();
+
+      document.querySelectorAll(".c403-pwl-host").forEach((host) => {
+        host.classList.remove("c403-pwl-host");
+        host.style.removeProperty("--c403-pwl-tokens-top");
+      });
+
       this.currentPuuid = null;
-      this.currentAnchor = null;
+      this.currentHost = null;
     }
 
-    attachContainer(anchor) {
+    attachContainer(host) {
       let container = document.getElementById(CONTAINER_ID);
       if (!container) {
         container = document.createElement("div");
         container.id = CONTAINER_ID;
       }
 
-      // İsmin hemen altına, statik bir kardeş olarak yerleştir. Ebeveyninin
-      // içine append etmiyoruz: eski sürüm bunu yapıp Oyna düğmesinin
-      // üstüne biniyordu.
-      const parent = anchor.parentElement;
-      if (!parent) return container;
-
-      if (container.parentElement !== parent || container.previousElementSibling !== anchor) {
-        anchor.insertAdjacentElement("afterend", container);
+      // Rozet, isim sütununun (position:relative) mutlak konumlu bir çocuğu
+      // olarak eklenir. Böylece istemci düzeni değişse bile hep ismin
+      // altında kalır; başka ekranlara / Oyna düğmesinin üstüne taşmaz.
+      if (container.parentElement !== host) {
+        host.appendChild(container);
       }
 
-      this.currentAnchor = anchor;
+      host.classList.add("c403-pwl-host");
+      this.currentHost = host;
+      this.positionContainer(host, container);
       return container;
+    }
+
+    positionContainer(host, container) {
+      if (!host || !container) return;
+
+      const hostRect = host.getBoundingClientRect();
+      if (hostRect.height < 2) return;
+
+      // Konumu sabit piksel varsayımıyla değil, ismin gerçek yerinden hesapla.
+      let top = 400;
+
+      const nameEl = host.querySelector(".style-profile-summoner-name");
+      if (nameEl && isRendered(nameEl)) {
+        const nameRect = nameEl.getBoundingClientRect();
+        if (nameRect.height >= 2) {
+          top = nameRect.bottom - hostRect.top + 8;
+        }
+      }
+
+      // Riot'un isim altındaki challenge rozetleri yerinde kalsın; bizim
+      // pill onların altına, aynı sütunun içine yerleşsin.
+      const flair = host.querySelector(".profile-challenge-banner-tokens");
+      if (flair && isRendered(flair) && (flair.innerText || "").trim()) {
+        const flairRect = flair.getBoundingClientRect();
+        if (flairRect.height >= 2) {
+          top = Math.max(top, flairRect.bottom - hostRect.top + 6);
+        }
+      }
+
+      container.style.top = Math.round(Math.max(0, top)) + "px";
     }
 
     async fetchAndRender(puuid) {
@@ -645,6 +690,7 @@
           <span class="c403-pwl-loading">İstatistikler yükleniyor…</span>
         </div>
       `;
+      this.positionContainer(this.currentHost, container);
 
       const curReq = ++this.requestId;
       const { selectedQueue, gamesCount } = CONFIG;
@@ -699,6 +745,7 @@
           this.currentPuuid = null;
           this.checkAndRender();
         });
+        this.positionContainer(this.currentHost, container);
         return;
       }
 
@@ -724,6 +771,7 @@
       container.querySelector(".c403-pwl-pill")?.addEventListener("click", () => {
         openModal();
       });
+      this.positionContainer(this.currentHost, container);
     }
 
     computeStats(data, puuid, selectedQueue = CONFIG.selectedQueue, gamesCount = CONFIG.gamesCount) {
