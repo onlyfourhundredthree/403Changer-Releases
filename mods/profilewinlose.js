@@ -3,8 +3,9 @@
  *
  * @name         ProfileWinLose
  * @author       403Changer
- * @description  Sihirdar profilinde son maçların G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
- * @version      2.1.0
+ * @description  Sihirdar profilinde kullanıcının isminin tam altında son maçların
+ *               G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
+ * @version      2.3.0
  */
 
 (function () {
@@ -97,6 +98,7 @@
 
   let CONFIG = { ...DEFAULT_CONFIG };
   const cache = new Map();
+  let cachedCurrentSummonerPuuid = null;
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -104,18 +106,18 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${CONTAINER_ID} {
-        display: inline-flex !important;
+        display: flex !important;
+        flex-direction: row !important;
         align-items: center !important;
-        width: auto !important;
-        max-width: fit-content !important;
-        margin: 0 0 0 16px !important;
+        width: fit-content !important;
+        max-width: 100% !important;
+        margin-top: 8px !important;
+        margin-bottom: 4px !important;
         padding: 0 !important;
-        z-index: 100 !important;
+        z-index: 999999 !important;
         position: relative !important;
         pointer-events: auto !important;
-        flex: 0 0 auto !important;
-        align-self: center !important;
-        vertical-align: middle !important;
+        clear: both !important;
       }
 
       .c403-pwl-pill {
@@ -124,10 +126,10 @@
         align-items: center;
         gap: 12px;
         padding: 6px 14px;
-        background: radial-gradient(120% 100% at 50% 0%, rgba(200, 170, 110, 0.16), rgba(10, 16, 24, 0.94));
-        border: 1px solid rgba(200, 170, 110, 0.45);
+        background: radial-gradient(120% 100% at 50% 0%, rgba(200, 170, 110, 0.18), rgba(10, 16, 24, 0.95));
+        border: 1px solid rgba(200, 170, 110, 0.5);
         border-radius: 5px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.1);
         backdrop-filter: blur(8px);
         font-family: "Beaufort for LOL", "Segoe UI", sans-serif;
         user-select: none;
@@ -138,8 +140,8 @@
 
       .c403-pwl-pill:hover {
         transform: translateY(-1px);
-        border-color: rgba(200, 170, 110, 0.85);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.8), 0 0 12px rgba(200, 170, 110, 0.3);
+        border-color: rgba(200, 170, 110, 0.9);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.85), 0 0 14px rgba(200, 170, 110, 0.35);
       }
 
       .c403-pwl-meta {
@@ -242,11 +244,11 @@
         align-items: center;
         justify-content: space-between;
         padding: 14px 20px;
-        background: rgba(0, 0, 0, 0.35);
+        background: rgba(0, 0, 0, 0.4);
         border-bottom: 1px solid rgba(200, 170, 110, 0.2);
       }
 
-      .c403-pwl-head-left {
+      .c403-pwl-brand {
         display: flex;
         align-items: center;
         gap: 12px;
@@ -346,14 +348,14 @@
         box-shadow: 0 0 10px rgba(200, 170, 110, 0.3);
       }
     `;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
   }
 
   // --- Profil Takipçi Sınıfı ---
   class ProfileWinLoseTracker {
     constructor() {
-      this.observer = null;
       this.currentPuuid = null;
+      this.currentTargetParent = null;
       this.pollTimer = null;
       this.requestId = 0;
       this.disposed = false;
@@ -363,141 +365,117 @@
     async init() {
       loadSettings();
       injectStyles();
-      this.observeProfile();
-      this.checkAndRender();
+      this.fetchCurrentSummonerOnce();
 
-      // İkincil hafif kontrol (Riot sekme geçişlerinde mutation observer tetiklenmezse)
+      // Optimize edilmiş periyodik kontrol (CPU/CEF yormaz, sonsuz döngü yaratmaz)
+      this.checkAndRender();
       this.pollTimer = setInterval(() => {
         if (!this.disposed) {
           this.checkAndRender();
         }
-      }, 1200);
+      }, 1500);
 
+      window.addEventListener("hashchange", () => this.checkAndRender());
       window.addEventListener("unload", () => this.cleanup());
+    }
+
+    async fetchCurrentSummonerOnce() {
+      try {
+        const res = await fetch("/lol-summoner/v1/current-summoner");
+        if (res.ok) {
+          const me = await res.json();
+          if (me && me.puuid) {
+            cachedCurrentSummonerPuuid = me.puuid;
+          }
+        }
+      } catch (e) {}
     }
 
     cleanup() {
       this.disposed = true;
-      if (this.observer) this.observer.disconnect();
       if (this.pollTimer) clearInterval(this.pollTimer);
       const el = document.getElementById(CONTAINER_ID);
       if (el) el.remove();
       cache.clear();
     }
 
-    observeProfile() {
-      this.observer = new MutationObserver(() => {
-        if (this.disposed) return;
-        this.checkAndRender();
-      });
-
-      this.observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["puuid", "is-searched", "data-screen-name", "class"],
-      });
-    }
-
-    async findProfilePuuid(profileRoot) {
-      // 1. Profil konteyneri içindeki tüm regalia ve puuid elemanları
-      const candidates = [];
-      if (profileRoot) {
-        candidates.push(profileRoot);
-        const inside = profileRoot.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid], [data-puuid]");
-        inside.forEach((el) => candidates.push(el));
-      }
-
-      document.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid]").forEach((el) => candidates.push(el));
-
-      // Öncelik: is-searched="true" olan veya doğrudan puuid taşıyan eleman
-      for (const el of candidates) {
+    findProfilePuuid(profileRoot) {
+      // 1. Profil ekranındaki regalia / puuid elemanları
+      const elements = profileRoot ? profileRoot.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid]") : [];
+      for (const el of elements) {
         if (el.getAttribute?.("is-searched") === "true") {
           const val = el.getAttribute?.("puuid") || el.puuid || el.dataset?.puuid;
           if (typeof val === "string" && val.length > 20) return val;
         }
       }
-
-      for (const el of candidates) {
+      for (const el of elements) {
         const val = el.getAttribute?.("puuid") || el.puuid || el.dataset?.puuid || el.getAttribute?.("data-puuid");
         if (typeof val === "string" && val.length > 20) return val;
       }
 
-      // 2. URL route / hash kontrolü (#/profile/UUID...)
+      // 2. URL hash kontrolü (#/profile/UUID...)
       const hash = window.location.hash || "";
       const match = hash.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
       if (match) return match[0];
 
-      // 3. Geçerli kullanıcı (kendi profilinde bakıyorsa)
-      try {
-        const res = await fetch("/lol-summoner/v1/current-summoner");
-        if (res.ok) {
-          const me = await res.json();
-          if (me && me.puuid) return me.puuid;
-        }
-      } catch (e) {}
+      // 3. Kendi profili
+      if (cachedCurrentSummonerPuuid) return cachedCurrentSummonerPuuid;
 
       return null;
     }
 
-    async checkAndRender() {
-      // Profil ekranının aktif olup olmadığını kontrol et
+    checkAndRender() {
+      // Profil ekranının aktif olup olmadığını hafifçe kontrol et
       const profileRoot =
         document.querySelector('[data-screen-name="rcp-fe-lol-profiles-main"]') ||
         document.querySelector("rcp-fe-lol-profiles") ||
         document.querySelector(".style-profile-overview-component") ||
-        document.querySelector("lol-regalia-profile-v2-element") ||
-        document.querySelector("lol-regalia-identity-v2-element");
+        document.querySelector(".style-profile-name-and-title");
 
       if (!profileRoot) {
-        this.currentPuuid = null;
-        const container = document.getElementById(CONTAINER_ID);
-        if (container) container.remove();
+        if (this.currentPuuid) {
+          this.currentPuuid = null;
+          this.currentTargetParent = null;
+          const container = document.getElementById(CONTAINER_ID);
+          if (container) container.remove();
+        }
         return;
       }
 
-      const puuid = await this.findProfilePuuid(profileRoot);
+      // Tam kullanıcının ismini taşıyan blok (Hedef: İsmin hemen altı)
+      const targetParent =
+        document.querySelector(".style-profile-name-and-title") ||
+        document.querySelector(".style-profile-summoner-info-component") ||
+        document.querySelector("lol-regalia-identity-v2-element") ||
+        profileRoot;
+
+      const puuid = this.findProfilePuuid(profileRoot);
       if (!puuid) return;
 
       const container = document.getElementById(CONTAINER_ID);
-      const isDetached = !container || !document.body.contains(container);
+      const isAlreadyAttached = container && targetParent.contains(container);
 
-      if (puuid !== this.currentPuuid || isDetached) {
-        this.currentPuuid = puuid;
-        this.attachContainer(profileRoot);
-        this.fetchAndRender(puuid);
+      // Eğer PUUID aynıysa ve eleman zaten doğru yerde duruyorsa HİÇBİR ŞEY YAPMA (CPU sıfır)
+      if (this.currentPuuid === puuid && isAlreadyAttached && this.currentTargetParent === targetParent) {
+        return;
       }
+
+      this.currentPuuid = puuid;
+      this.currentTargetParent = targetParent;
+      this.attachContainer(targetParent);
+      this.fetchAndRender(puuid);
     }
 
-    attachContainer(profileRoot) {
+    attachContainer(targetParent) {
       let container = document.getElementById(CONTAINER_ID);
       if (!container) {
         container = document.createElement("div");
         container.id = CONTAINER_ID;
       }
 
-      // Kullanıcı talebi: Tam profil isminin hemen sağında yer alsın
-      const nameAndTitle = document.querySelector(".style-profile-name-and-title");
-      const summonerInfo = document.querySelector(".style-profile-summoner-info-component");
-      const statusIcons = document.querySelector(".style-profile-summoner-status-icons");
-      const regalia = document.querySelector("lol-regalia-profile-v2-element");
-      const subNav = document.querySelector(".style-profile-sub-nav-component");
-      const overview = document.querySelector(".style-profile-overview-component");
-
-      if (nameAndTitle && nameAndTitle.parentNode) {
-        nameAndTitle.parentNode.insertBefore(container, nameAndTitle.nextSibling);
-      } else if (statusIcons && statusIcons.parentNode) {
-        statusIcons.parentNode.insertBefore(container, statusIcons.nextSibling);
-      } else if (summonerInfo) {
-        summonerInfo.appendChild(container);
-      } else if (regalia && regalia.parentNode) {
-        regalia.parentNode.insertBefore(container, regalia.nextSibling);
-      } else if (subNav && subNav.parentNode) {
-        subNav.parentNode.insertBefore(container, subNav);
-      } else if (overview) {
-        overview.prepend(container);
-      } else if (profileRoot) {
-        profileRoot.prepend(container);
+      // Kullanıcının isminin tam altına yerleştir
+      if (!targetParent.contains(container)) {
+        targetParent.appendChild(container);
       }
 
       return container;
@@ -642,143 +620,101 @@
   }
 
   // --- Ayarlar Modalı ---
-  let modalEl = null;
-
   function ensureModal() {
     let modal = document.getElementById(MODAL_ID);
-    if (!modal) {
-      injectStyles();
-      modal = document.createElement("div");
-      modal.id = MODAL_ID;
-      modal.innerHTML = `
-        <div class="c403-pwl-dialog">
-          <div class="c403-pwl-head">
-            <div class="c403-pwl-head-left">
-              <div class="c403-pwl-logo"></div>
-              <div class="c403-pwl-titles">
-                <h2>Profil Galibiyet/Mağlubiyet</h2>
-                <span>403Changer İstatistik Ayarları</span>
-              </div>
-            </div>
-            <button type="button" class="c403-pwl-close" id="c403-pwl-close-btn">✕</button>
-          </div>
+    if (modal) return modal;
 
-          <div class="c403-pwl-body">
-            <div class="c403-pwl-group">
-              <label>Takip Edilecek Sıra Türü</label>
-              <select class="c403-pwl-select" id="c403-pwl-queue-sel">
-                <option value="solo">Dereceli Tek/Çift</option>
-                <option value="flex">Dereceli Esnek</option>
-                <option value="normal">Normal (Sıralı/Seçimli)</option>
-                <option value="aram">ARAM</option>
-                <option value="arena">Arena</option>
-                <option value="quickplay">Hızlı Oyun</option>
-                <option value="all">Tüm Modlar</option>
-              </select>
-            </div>
-
-            <div class="c403-pwl-group">
-              <label>Hesaplanacak Son Maç Sayısı (1 - 200)</label>
-              <input type="number" class="c403-pwl-input" id="c403-pwl-count-inp" min="1" max="200" value="40" />
-            </div>
-
-            <div class="c403-pwl-group">
-              <label>KDA Oranı Gösterimi</label>
-              <select class="c403-pwl-select" id="c403-pwl-kda-sel">
-                <option value="show">Göster</option>
-                <option value="hide">Gizle</option>
-              </select>
+    modal = document.createElement("div");
+    modal.id = MODAL_ID;
+    modal.innerHTML = `
+      <div class="c403-pwl-dialog" role="dialog">
+        <div class="c403-pwl-head">
+          <div class="c403-pwl-brand">
+            <div class="c403-pwl-logo"></div>
+            <div class="c403-pwl-titles">
+              <h2>Profil Win/Lose Ayarları</h2>
+              <span>İstatistik & Takip Tercihleri</span>
             </div>
           </div>
-
-          <div class="c403-pwl-foot">
-            <button type="button" class="c403-pwl-btn" id="c403-pwl-save-btn">Kaydet ve Uygula</button>
+          <button type="button" class="c403-pwl-close" id="c403-pwl-close">✕</button>
+        </div>
+        <div class="c403-pwl-body">
+          <div class="c403-pwl-group">
+            <label>Kuyruk / Oyun Modu</label>
+            <select class="c403-pwl-select" id="c403-pwl-queue-select">
+              ${Object.entries(QUEUE_TYPES)
+                .map(([key, item]) => `<option value="${key}">${item.name}</option>`)
+                .join("")}
+            </select>
+          </div>
+          <div class="c403-pwl-group">
+            <label>İncelenecek Son Maç Sayısı (1 - 200)</label>
+            <input type="number" class="c403-pwl-input" id="c403-pwl-count-input" min="1" max="200" value="40">
+          </div>
+          <div class="c403-pwl-group">
+            <label>KDA Gösterimi</label>
+            <select class="c403-pwl-select" id="c403-pwl-kda-select">
+              <option value="show">Göster</option>
+              <option value="hide">Gizle</option>
+            </select>
           </div>
         </div>
-      `;
+        <div class="c403-pwl-foot">
+          <button type="button" class="c403-pwl-btn" id="c403-pwl-save">Kaydet ve Uygula</button>
+        </div>
+      </div>
+    `;
 
-      modal.querySelector("#c403-pwl-close-btn").addEventListener("click", closeModal);
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) closeModal();
-      });
+    document.body.appendChild(modal);
 
-      modal.querySelector("#c403-pwl-save-btn").addEventListener("click", () => {
-        const qSel = modal.querySelector("#c403-pwl-queue-sel").value;
-        const cInp = parseInt(modal.querySelector("#c403-pwl-count-inp").value, 10);
-        const kSel = modal.querySelector("#c403-pwl-kda-sel").value;
+    modal.querySelector("#c403-pwl-close").addEventListener("click", closeModal);
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
 
-        CONFIG.selectedQueue = QUEUE_TYPES[qSel] ? qSel : "solo";
-        CONFIG.gamesCount = Math.min(200, Math.max(1, isNaN(cInp) ? 40 : cInp));
-        CONFIG.kdaDisplay = kSel === "hide" ? "hide" : "show";
+    modal.querySelector("#c403-pwl-save").addEventListener("click", () => {
+      const qSelect = modal.querySelector("#c403-pwl-queue-select");
+      const cInput = modal.querySelector("#c403-pwl-count-input");
+      const kSelect = modal.querySelector("#c403-pwl-kda-select");
 
-        saveSettings();
-        cache.clear();
+      const games = Math.min(200, Math.max(1, parseInt(cInput.value, 10) || 40));
+      CONFIG.selectedQueue = qSelect.value;
+      CONFIG.gamesCount = games;
+      CONFIG.kdaDisplay = kSelect.value;
 
-        if (window.__c403ProfileWinLoseInstance && window.__c403ProfileWinLoseInstance.currentPuuid) {
-          window.__c403ProfileWinLoseInstance.fetchAndRender(window.__c403ProfileWinLoseInstance.currentPuuid);
-        }
+      saveSettings();
+      closeModal();
+      cache.clear();
 
-        closeModal();
-      });
-    }
+      if (window.__c403ProfileTrackerInstance) {
+        window.__c403ProfileTrackerInstance.currentPuuid = null;
+        window.__c403ProfileTrackerInstance.checkAndRender();
+      }
+    });
 
-    if (document.body && !document.body.contains(modal)) {
-      document.body.appendChild(modal);
-    }
-
-    modalEl = modal;
     return modal;
   }
 
   function openModal() {
     loadSettings();
     const modal = ensureModal();
-    if (!modal) return;
-    if (!document.body.contains(modal)) {
-      document.body.appendChild(modal);
-    }
-    const qSel = modal.querySelector("#c403-pwl-queue-sel");
-    const cInp = modal.querySelector("#c403-pwl-count-inp");
-    const kSel = modal.querySelector("#c403-pwl-kda-sel");
-    if (qSel) qSel.value = CONFIG.selectedQueue;
-    if (cInp) cInp.value = CONFIG.gamesCount;
-    if (kSel) kSel.value = CONFIG.kdaDisplay;
+    modal.querySelector("#c403-pwl-queue-select").value = CONFIG.selectedQueue;
+    modal.querySelector("#c403-pwl-count-input").value = CONFIG.gamesCount;
+    modal.querySelector("#c403-pwl-kda-select").value = CONFIG.kdaDisplay;
     modal.classList.add("c403-open");
-    modal.style.display = "flex";
   }
 
   function closeModal() {
-    const modal = document.getElementById(MODAL_ID) || modalEl;
-    if (modal) {
-      modal.classList.remove("c403-open");
-      modal.style.display = "none";
-    }
+    const modal = document.getElementById(MODAL_ID);
+    if (modal) modal.classList.remove("c403-open");
   }
 
-  // --- Global Ayarlar Erişimi (BuiltinMods Paneli İçin) ---
   window.__c403ModSettings = window.__c403ModSettings || {};
   window.__c403ModSettings["profilewinlose"] = () => openModal();
-  window.__c403ModSettings["profile_win_lose"] = () => openModal();
-  window.c403OpenProfileWinLoseSettings = () => openModal();
+  window.c403OpenProfileWinLose = () => openModal();
   window.addEventListener("c403-open-mod-settings-profilewinlose", () => openModal());
 
-  // --- Başlatma Mantığı ---
-  function startTracker() {
-    if (!document.body) {
-      window.addEventListener("DOMContentLoaded", startTracker);
-      return;
-    }
-    if (!window.__c403ProfileWinLoseInstance) {
-      window.__c403ProfileWinLoseInstance = new ProfileWinLoseTracker();
-    }
-  }
-
-  if (document.readyState === "complete" || document.readyState === "interactive") {
-    startTracker();
-  } else {
-    window.addEventListener("DOMContentLoaded", startTracker);
-    window.addEventListener("load", startTracker);
-  }
-
-  console.log("[ProfileWinLose] Mod başarıyla yüklendi ve aktif edildi.");
+  // Başlat
+  window.__c403ProfileTrackerInstance = new ProfileWinLoseTracker();
+  console.log("[ProfileWinLose] Mod optimize edilmiş versiyonla yüklendi.");
 })();
