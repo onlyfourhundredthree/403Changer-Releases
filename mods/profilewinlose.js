@@ -5,7 +5,7 @@
  * @author       403Changer
  * @description  Sihirdar profilinde kullanıcının isminin tam altında son maçların
  *               G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
- * @version      2.4.0
+ * @version      2.4.1
  */
 
 (function () {
@@ -114,15 +114,19 @@
         display: flex !important;
         flex-direction: row !important;
         align-items: center !important;
-        width: max-content !important;
+        flex: 0 0 auto !important;
+        width: 100% !important;
         max-width: 100% !important;
         min-width: 0 !important;
         box-sizing: border-box !important;
         margin-top: 8px !important;
         margin-bottom: 4px !important;
         padding: 0 !important;
-        z-index: 999999 !important;
-        position: relative !important;
+        /* Static on purpose: an absolutely positioned / z-indexed pill could
+           float over the client (for example the Play button) when the
+           profile screen was hidden but still mounted. */
+        position: static !important;
+        z-index: auto !important;
         pointer-events: auto !important;
         clear: both !important;
       }
@@ -359,11 +363,95 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // --- Görünürlük yardımcıları ---
+  // Profil ekranı istemcide sürekli takılı kalıyor (sadece gizleniyor), bu
+  // yüzden DOM'da bulunması "profili açtı" demek değil. Eski kod bunu
+  // ayırt etmediği için rozet ana ekranda Oyna düğmesinin üstüne biniyordu.
+  function isRendered(el) {
+    if (!el || !el.isConnected) return false;
+    if (typeof el.getClientRects === "function" && el.getClientRects().length === 0) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return false;
+    const style = window.getComputedStyle(el);
+    if (!style) return true;
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    if (parseFloat(style.opacity || "1") < 0.05) return false;
+    return true;
+  }
+
+  function getActiveProfileScreen() {
+    // Ana ekran (Oyna düğmesinin bulunduğu yer) açıkken rozeti ASLA çizme.
+    // Profil uygulaması arkada takılı kaldığı için bu kontrol şart.
+    const homeScreens = document.querySelectorAll(
+      '[data-screen-name^="rcp-fe-lol-home"], rcp-fe-lol-home'
+    );
+    for (const home of homeScreens) {
+      if (isRendered(home)) return null;
+    }
+
+    const screens = document.querySelectorAll(
+      '[data-screen-name="rcp-fe-lol-profiles-main"], rcp-fe-lol-profiles'
+    );
+    for (const screen of screens) {
+      if (isRendered(screen)) return screen;
+    }
+
+    // Yeni istemcide hash doğrudan profili işaret eder.
+    if (/^#\/profile\b/i.test(window.location.hash || "")) {
+      const overview = document.querySelector(".style-profile-overview-component");
+      if (isRendered(overview)) return overview;
+    }
+
+    return null;
+  }
+
+  function findProfileAnchor(screen) {
+    if (!screen) return null;
+
+    const selectors = [
+      ".style-profile-name-and-title",
+      ".style-profile-summoner-info-component",
+      "lol-regalia-identity-v2-element",
+      "lol-regalia-profile-v2-element",
+    ];
+
+    // Önce profil ekranının içinde ara; bazı istemci sürümlerinde isim bloğu
+    // ekran elementinin dışında kalıyor, o yüzden görünür ekran şartıyla
+    // belge genelinde ikinci bir tur atıyoruz.
+    for (const root of [screen, document]) {
+      for (const selector of selectors) {
+        const nodes = root.querySelectorAll(selector);
+        for (const node of nodes) {
+          if (!isRendered(node) || !node.parentElement) continue;
+
+          // İsim bloğu yatay bir flex satırının içindeyse rozeti o satırın
+          // altına, satırın kendisinden sonra koy (ismin hemen altı).
+          let anchor = node;
+          const parent = node.parentElement;
+          const parentStyle = window.getComputedStyle(parent);
+          if (
+            parentStyle &&
+            parentStyle.display.includes("flex") &&
+            (parentStyle.flexDirection || "").startsWith("row")
+          ) {
+            if (parent.parentElement) anchor = parent;
+          }
+
+          if (anchor.parentElement && isRendered(anchor.parentElement)) {
+            return anchor;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   // --- Profil Takipçi Sınıfı ---
   class ProfileWinLoseTracker {
     constructor() {
       this.currentPuuid = null;
-      this.currentTargetParent = null;
+      this.currentAnchor = null;
       this.pollTimer = null;
       this.requestId = 0;
       this.disposed = false;
@@ -464,7 +552,7 @@
 
       // 4. Sadece gerçekten kendi profilimizdeyse kendi puuid'imize dön.
       //    Başka birinin profilinde yanlışlıkla kendi istatistiklerimizi göstermeyelim.
-      const nameEl = document.querySelector(".style-profile-name-and-title");
+      const nameEl = profileRoot?.querySelector?.(".style-profile-name-and-title");
       const shownName = (nameEl?.innerText || nameEl?.textContent || "").toLowerCase();
       if (cachedCurrentSummonerName && shownName.includes(cachedCurrentSummonerName.toLowerCase())) {
         return cachedCurrentSummonerPuuid;
@@ -479,62 +567,72 @@
       try {
         await this.fetchCurrentSummonerOnce();
 
-        // Profil ekranının aktif olup olmadığını hafifçe kontrol et
-        const profileRoot =
-          document.querySelector('[data-screen-name="rcp-fe-lol-profiles-main"]') ||
-          document.querySelector("rcp-fe-lol-profiles") ||
-          document.querySelector(".style-profile-overview-component") ||
-          document.querySelector(".style-profile-name-and-title");
-
-        if (!profileRoot) {
-          if (this.currentPuuid) {
-            this.currentPuuid = null;
-            this.currentTargetParent = null;
-            const container = document.getElementById(CONTAINER_ID);
-            if (container) container.remove();
-          }
+        // Sadece gerçekten GÖRÜNÜR profil ekranında çalış. Profil uygulaması
+        // arka planda takılı kaldığı için varlığı yeterli değil.
+        const profileScreen = getActiveProfileScreen();
+        if (!profileScreen) {
+          this.removeContainer();
           return;
         }
 
-        // Tam kullanıcının ismini taşıyan blok (Hedef: İsmin hemen altı)
-        const targetParent =
-          document.querySelector(".style-profile-name-and-title") ||
-          document.querySelector(".style-profile-summoner-info-component") ||
-          document.querySelector("lol-regalia-identity-v2-element") ||
-          profileRoot;
+        const anchor = findProfileAnchor(profileScreen);
+        if (!anchor) {
+          this.removeContainer();
+          return;
+        }
 
-        const puuid = await this.resolveProfilePuuid(profileRoot);
-        if (!puuid) return;
+        const puuid = await this.resolveProfilePuuid(profileScreen);
+        if (!puuid) {
+          this.removeContainer();
+          return;
+        }
 
         const container = document.getElementById(CONTAINER_ID);
-        const isAlreadyAttached = container && targetParent.contains(container);
 
-        // Eğer PUUID aynıysa ve eleman zaten doğru yerde duruyorsa HİÇBİR ŞEY YAPMA (CPU sıfır)
-        if (this.currentPuuid === puuid && isAlreadyAttached && this.currentTargetParent === targetParent) {
+        // PUUID ve konum aynıysa hiçbir şey yapma (CPU sıfır)
+        if (
+          container &&
+          this.currentPuuid === puuid &&
+          this.currentAnchor === anchor &&
+          container.parentElement === anchor.parentElement &&
+          container.previousElementSibling === anchor
+        ) {
           return;
         }
 
         this.currentPuuid = puuid;
-        this.currentTargetParent = targetParent;
-        this.attachContainer(targetParent);
+        this.attachContainer(anchor);
         this.fetchAndRender(puuid);
       } finally {
         this._resolving = false;
       }
     }
 
-    attachContainer(targetParent) {
+    removeContainer() {
+      const container = document.getElementById(CONTAINER_ID);
+      if (container) container.remove();
+      this.currentPuuid = null;
+      this.currentAnchor = null;
+    }
+
+    attachContainer(anchor) {
       let container = document.getElementById(CONTAINER_ID);
       if (!container) {
         container = document.createElement("div");
         container.id = CONTAINER_ID;
       }
 
-      // Kullanıcının isminin tam altına yerleştir
-      if (!targetParent.contains(container)) {
-        targetParent.appendChild(container);
+      // İsmin hemen altına, statik bir kardeş olarak yerleştir. Ebeveyninin
+      // içine append etmiyoruz: eski sürüm bunu yapıp Oyna düğmesinin
+      // üstüne biniyordu.
+      const parent = anchor.parentElement;
+      if (!parent) return container;
+
+      if (container.parentElement !== parent || container.previousElementSibling !== anchor) {
+        anchor.insertAdjacentElement("afterend", container);
       }
 
+      this.currentAnchor = anchor;
       return container;
     }
 
