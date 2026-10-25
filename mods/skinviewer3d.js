@@ -4,7 +4,7 @@
  * @name         3DSkinViewer
  * @author       Ventoba (403Changer Entegrasyonu)
  * @description  Şampiyon kostümlerini incelerken 3D modelini, tüm animasyonlarını ve parçalarını incelemenizi sağlar.
- * @version      1.0.0
+ * @version      1.1.0
  */
 
 (function () {
@@ -48,67 +48,140 @@
   let eyeOverlay = null;
   let loopInterval = null;
 
-  async function resolveActiveSkin() {
-    let champAlias = null;
-    let skinPath = null;
+  let championSummaryPromise = null;
 
+  function getChampionSummary() {
+    if (!championSummaryPromise) {
+      championSummaryPromise = fetch("/lol-game-data/assets/v1/champion-summary.json")
+        .then((res) => (res.ok ? res.json() : []))
+        .catch(() => []);
+    }
+    return championSummaryPromise;
+  }
+
+  function parseSkinFromElement(el) {
+    if (!el) return null;
+    const style = el.style?.backgroundImage || window.getComputedStyle(el).backgroundImage || "";
+    const match = style.match(/\/Characters\/([a-zA-Z0-9]+)\/Skins\/(Skin\d+|Base)\//i);
+    if (!match) return null;
+    return { champAlias: match[1], skinPath: match[2] };
+  }
+
+  async function toSkinInfo(champAlias, skinPath) {
+    const alias = String(champAlias || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!alias) return null;
+
+    const lc = skinPath ? String(skinPath).toLowerCase() : "base";
+    const skinIndex = lc === "base" ? 0 : (parseInt(lc.replace("skin", ""), 10) || 0);
+
+    const data = await getChampionSummary();
+    if (!Array.isArray(data)) return null;
+    const ch = data.find((c) => (c.alias || "").toLowerCase() === alias);
+    if (!ch) return null;
+    return { champAlias: alias, skinId: ch.id * 1000 + skinIndex, skinIndex };
+  }
+
+  async function resolveActiveSkin() {
     // Scan for the explicitly active thumbnail block natively
     const activeThumb = document.querySelector(".thumbnail-wrapper.active-skin .cdp-skin-thumbnail-img");
-    if (activeThumb) {
-      const thumbStyle = activeThumb.style.backgroundImage || window.getComputedStyle(activeThumb).backgroundImage || "";
-      const match = thumbStyle.match(/\/Characters\/([a-zA-Z0-9]+)\/Skins\/(Skin\d+|Base)\//i);
-      if (match) {
-        champAlias = match[1].toLowerCase();
-        skinPath = match[2];
-      }
-    }
+    let info = parseSkinFromElement(activeThumb);
 
     // Fallback for baseline character overview
-    if (!champAlias) {
+    if (!info) {
       const bd = Array.from(document.querySelectorAll("img.cdp-backdrop-img"))
         .reverse()
         .find((img) => img.src && img.src.includes("/Characters/"));
-      if (bd) {
-        const m = bd.src.match(/\/Characters\/([a-zA-Z0-9]+)\/Skins\/(Skin\d+|Base)\//i);
-        if (m) {
-          champAlias = m[1].toLowerCase();
-          skinPath = m[2];
-        }
+      if (bd) info = parseSkinFromElement(bd);
+    }
+
+    // Bulunamadıysa yanlış şampiyon (eski "ahri" varsayılanı) göstermek yerine
+    // hiç açmayalım.
+    if (!info) return null;
+    return toSkinInfo(info.champAlias, info.skinPath);
+  }
+
+  // Göz düğmesini fare hareketine göre konumlandırma: her mousemove'da tüm
+  // kartların ölçüsünü almak yerine sadece hedef değiştiğinde çalışır.
+  let eyeTrackingBound = false;
+  function ensureEyeTracking() {
+    if (eyeTrackingBound) return;
+    eyeTrackingBound = true;
+
+    let eyeRaf = 0;
+    const hideEye = () => {
+      if (eyeOverlay) eyeOverlay.style.display = "none";
+    };
+
+    const trackEye = (target) => {
+      if (!eyeOverlay || !target) return;
+      const section = document.querySelector(".cdp-skins-section");
+      if (!section || window.getComputedStyle(section).display === "none") {
+        hideEye();
+        return;
       }
-    }
+      if (eyeOverlay.contains(target)) return;
 
-    if (!champAlias) {
-      const am = document.body.innerHTML.match(/\/Characters\/([a-zA-Z0-9]+)\//i);
-      champAlias = am ? am[1].toLowerCase() : "ahri";
-      skinPath = "Base";
-    }
+      const hoveredThumb = target.closest && target.closest(".thumbnail-wrapper, .buffer-wrapper");
+      if (!hoveredThumb) {
+        hideEye();
+        return;
+      }
 
-    const lc = skinPath ? skinPath.toLowerCase() : "base";
-    const skinIndex = lc === "base" ? 0 : parseInt(lc.replace("skin", ""), 10);
-    champAlias = champAlias.replace(/[^a-z0-9]/g, "");
+      const r = hoveredThumb.getBoundingClientRect();
+      if (!r.width || !r.height) {
+        hideEye();
+        return;
+      }
 
-    try {
-      const res = await fetch("/lol-game-data/assets/v1/champion-summary.json");
-      const data = await res.json();
-      const ch = data.find((c) => c.alias.toLowerCase() === champAlias);
-      if (!ch) return null;
-      return { champAlias, skinId: ch.id * 1000 + skinIndex, skinIndex };
-    } catch {
-      return null;
-    }
+      let maxArea = 0;
+      document.querySelectorAll(".thumbnail-wrapper, .buffer-wrapper").forEach((t) => {
+        const tr = t.getBoundingClientRect();
+        const area = tr.width * tr.height;
+        if (area > maxArea) maxArea = area;
+      });
+
+      const myArea = r.width * r.height;
+      if (maxArea > 0 && Math.abs(maxArea - myArea) < 6) {
+        const skinEl = hoveredThumb.querySelector(".cdp-skin-thumbnail-img") || hoveredThumb;
+        eyeOverlay._skinInfo = parseSkinFromElement(skinEl);
+        eyeOverlay.style.left = r.left + r.width / 2 - 24 + "px";
+        eyeOverlay.style.top = r.top + r.height / 2 - 24 + "px";
+        eyeOverlay.style.display = "flex";
+      } else {
+        hideEye();
+      }
+    };
+
+    document.addEventListener("pointerover", (e) => {
+      if (eyeRaf) return;
+      eyeRaf = requestAnimationFrame(() => {
+        eyeRaf = 0;
+        trackEye(e.target);
+      });
+    });
+
+    document.addEventListener("pointerout", (e) => {
+      const to = e.relatedTarget;
+      if (to && (to.closest?.(".thumbnail-wrapper, .buffer-wrapper") || eyeOverlay?.contains(to))) return;
+      hideEye();
+    });
   }
 
   function initWatcher() {
     if (loopInterval) clearInterval(loopInterval);
 
+    let busy = false;
     loopInterval = setInterval(async () => {
-      const skinsSection = document.querySelector(".cdp-skins-section");
-      const isSkinsTab = skinsSection && window.getComputedStyle(skinsSection).display !== "none";
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const skinsSection = document.querySelector(".cdp-skins-section");
+        const isSkinsTab = skinsSection && window.getComputedStyle(skinsSection).display !== "none";
 
-      if (!isSkinsTab) {
-        if (eyeOverlay) eyeOverlay.style.display = "none";
-        return;
-      }
+        if (!isSkinsTab) {
+          if (eyeOverlay) eyeOverlay.style.display = "none";
+          return;
+        }
 
       // Pre-load current skin model into browser cache if enabled
       if (CONFIG.preloadingEnabled) {
@@ -156,54 +229,18 @@
         eyeOverlay.addEventListener("click", (e) => {
           e.stopPropagation();
           e.preventDefault();
-          open3DViewer();
+          open3DViewer(eyeOverlay._skinInfo || null);
         });
         document.body.appendChild(eyeOverlay);
-
-        // Global mouse movement listener to track active carousel card
-        document.addEventListener("mousemove", (e) => {
-          const section = document.querySelector(".cdp-skins-section");
-          if (!section || window.getComputedStyle(section).display === "none") {
-            if (eyeOverlay) eyeOverlay.style.display = "none";
-            return;
-          }
-
-          if (eyeOverlay && eyeOverlay.contains(e.target)) return;
-
-          const hoveredThumb = e.target.closest(".thumbnail-wrapper, .buffer-wrapper");
-          if (hoveredThumb) {
-            const r = hoveredThumb.getBoundingClientRect();
-            let isActive = false;
-            const allThumbs = document.querySelectorAll(".thumbnail-wrapper, .buffer-wrapper");
-            let maxArea = 0;
-            allThumbs.forEach((t) => {
-              const tr = t.getBoundingClientRect();
-              const area = tr.width * tr.height;
-              if (area > maxArea) maxArea = area;
-            });
-
-            const myArea = r.width * r.height;
-            isActive = maxArea > 0 && Math.abs(maxArea - myArea) < 6;
-
-            if (isActive && eyeOverlay) {
-              eyeOverlay.style.left = r.left + r.width / 2 - 24 + "px";
-              eyeOverlay.style.top = r.top + r.height / 2 - 24 + "px";
-              if (eyeOverlay.style.display !== "flex") {
-                eyeOverlay.style.display = "flex";
-              }
-              return;
-            }
-          }
-
-          if (eyeOverlay && !eyeOverlay.contains(e.target)) {
-            eyeOverlay.style.display = "none";
-          }
-        });
+        ensureEyeTracking();
       }
-    }, 600);
+      } finally {
+        busy = false;
+      }
+    }, 1000);
   }
 
-  async function open3DViewer() {
+  async function open3DViewer(skinHint = null) {
     if (document.getElementById("c403-3d-overlay")) return;
 
     const overlay = document.createElement("div");
@@ -238,10 +275,25 @@
       closeBtn.style.borderColor = "rgba(200, 170, 110, 0.4)";
     };
 
+    let iframe = null;
+    let watchdogToken = null;
+    let closed = false;
+
+    const escListener = (e) => {
+      if (e.key === "Escape") cleanupViewer();
+    };
+
     const cleanupViewer = () => {
+      if (closed) return;
+      closed = true;
+      if (watchdogToken) {
+        clearInterval(watchdogToken);
+        watchdogToken = null;
+      }
+      window.removeEventListener("keydown", escListener);
       overlay.style.display = "none";
+      if (iframe) iframe.src = "about:blank";
       requestAnimationFrame(() => {
-        iframe.src = "about:blank";
         setTimeout(() => {
           if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         }, 50);
@@ -249,16 +301,11 @@
     };
 
     closeBtn.addEventListener("click", cleanupViewer);
-
-    const escListener = (e) => {
-      if (e.key === "Escape") {
-        window.removeEventListener("keydown", escListener);
-        cleanupViewer();
-      }
-    };
     window.addEventListener("keydown", escListener);
 
-    const iframe = document.createElement("iframe");
+    iframe = document.createElement("iframe");
+    iframe.setAttribute("allowfullscreen", "");
+    iframe.allow = "fullscreen";
     iframe.style.cssText = `
       width: 94%; height: 90%;
       border: 1px solid rgba(200, 170, 110, 0.4);
@@ -271,7 +318,10 @@
     document.body.appendChild(overlay);
 
     // Watchdog: If Gameflow phase changes to ReadyCheck, ChampSelect, etc., auto-close
-    const watchdogToken = setInterval(async () => {
+    let watchdogBusy = false;
+    watchdogToken = setInterval(async () => {
+      if (watchdogBusy) return;
+      watchdogBusy = true;
       try {
         const res = await fetch("/lol-gameflow/v1/gameflow-phase");
         const phase = await res.text();
@@ -281,18 +331,23 @@
           phase.includes("InProgress") ||
           phase.includes("PreEndOfGame")
         ) {
-          clearInterval(watchdogToken);
           cleanupViewer();
         }
-      } catch (e) {}
-    }, 800);
+      } catch (e) {
+      } finally {
+        watchdogBusy = false;
+      }
+    }, 900);
 
-    closeBtn.addEventListener("click", () => clearInterval(watchdogToken));
-
-    const sInfo = await resolveActiveSkin();
+    const sInfo = skinHint
+      ? await toSkinInfo(skinHint.champAlias, skinHint.skinPath)
+      : await resolveActiveSkin();
     if (!sInfo) {
-      alert("Aktif kostüm kimliği tespit edilemedi.");
-      cleanupViewer();
+      const message = document.createElement("div");
+      message.textContent = "Aktif kostüm kimliği tespit edilemedi. Kostüm sekmesinde bir kostüm seçip tekrar deneyin.";
+      message.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#ff4655;font-size:14px;text-align:center;max-width:70%;line-height:1.5;";
+      overlay.appendChild(message);
+      setTimeout(cleanupViewer, 2600);
       return;
     }
 
@@ -874,6 +929,11 @@ window.addEventListener('resize', () => {
 
   // 403Changer Mod Ayar Çarkı Kaydı
   function showSettingsModal() {
+    // Aynı anda iki mod ayar penceresi açık kalmasın.
+    ["c403-bg-modal", "c403-profile-winloss-modal", "c403-icon-swapper-modal", "c403-soloq-settings-modal"]
+      .forEach((id) => document.getElementById(id)?.remove());
+    document.getElementById(MODAL_ID)?.remove();
+
     let modal = document.getElementById(MODAL_ID);
     if (!modal) {
       modal = document.createElement("div");

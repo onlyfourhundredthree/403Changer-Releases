@@ -4,7 +4,7 @@
  * @name         IconSwapper
  * @author       403Changer (Original by Yimikami)
  * @description  İstemcideki sihirdar simgesini tüm LoL simgeleriyle veya özel yüklenen görsellerle anında değiştirir.
- * @version      1.2.0
+ * @version      1.3.0
  */
 
 (() => {
@@ -47,18 +47,23 @@
       return val;
     },
     set: async (key, val) => {
+      let saved = false;
       if (window.DataStore && typeof window.DataStore.set === "function") {
         try {
           await window.DataStore.set(key, val);
+          saved = true;
         } catch (e) {}
       }
       try {
         if (val === null || val === undefined) {
           localStorage.removeItem(key);
+          saved = true;
         } else {
           localStorage.setItem(key, JSON.stringify(val));
+          saved = true;
         }
       } catch (e) {}
+      return saved;
     },
   };
 
@@ -134,39 +139,63 @@
 
   function loadImageFromUrl(url) {
     return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        const maxWidth = 256;
-        const maxHeight = 256;
-        let { width, height } = img;
+      const finalize = (img) => {
+        try {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          const maxWidth = 192;
+          const maxHeight = 192;
+          let { width, height } = { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
 
-        if (width > height) {
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
+          if (width > height) {
+            if (width > maxWidth) {
+              height = (height * maxWidth) / width;
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = (width * maxHeight) / height;
+              height = maxHeight;
+            }
           }
-        } else {
-          if (height > maxHeight) {
-            width = (width * maxHeight) / height;
-            height = maxHeight;
-          }
+
+          canvas.width = Math.max(1, Math.round(width));
+          canvas.height = Math.max(1, Math.round(height));
+          if (!ctx) throw new Error("canvas yok");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL("image/webp", 0.85);
+          resolve({ dataUrl, width: canvas.width, height: canvas.height, originalUrl: url });
+        } catch (e) {
+          // CORS nedeniyle canvas "tainted" olabilir; doğrudan URL ile kullan.
+          resolve({
+            dataUrl: url,
+            width: img.naturalWidth || 0,
+            height: img.naturalHeight || 0,
+            originalUrl: url,
+            remote: true,
+          });
         }
-
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/png", 0.9);
-        resolve({ dataUrl, width, height, originalUrl: url });
       };
-      img.onerror = () => reject(new Error("Görsel indirilemedi."));
-      img.src = url;
+
+      const attempt = (useCors) => {
+        const img = new Image();
+        if (useCors) img.crossOrigin = "anonymous";
+        img.onload = () => finalize(img);
+        img.onerror = () => {
+          if (useCors) {
+            attempt(false);
+          } else {
+            reject(new Error("Görsel indirilemedi."));
+          }
+        };
+        img.src = url;
+      };
+
+      attempt(true);
     });
   }
 
-  function processImageFile(file, maxWidth = 256, maxHeight = 256, quality = 0.9) {
+  function processImageFile(file, maxWidth = 192, maxHeight = 192, quality = 0.85) {
     return new Promise((resolve, reject) => {
       const fileId = generateFileId(file);
       if (fileCache[fileId]) return resolve(fileCache[fileId]);
@@ -175,31 +204,40 @@
       const reader = new FileReader();
 
       reader.onload = (e) => {
-        img.src = e.target.result;
         img.onload = () => {
-          let width = img.width;
-          let height = img.height;
+          try {
+            let width = img.width;
+            let height = img.height;
 
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
+            if (width > maxWidth) {
+              height = (height * maxWidth) / width;
+              width = maxWidth;
+            }
+            if (height > maxHeight) {
+              width = (width * maxHeight) / height;
+              height = maxHeight;
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(width));
+            canvas.height = Math.max(1, Math.round(height));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) throw new Error("canvas yok");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // WebP + 192px: 6 MB'lık bir PNG bile ~20-40 KB'a iner,
+            // böylece localStorage kotası dolmaz.
+            const dataUrl = canvas.toDataURL("image/webp", quality);
+            fileCache[fileId] = { dataUrl, width: canvas.width, height: canvas.height, originalSize: file.size };
+            const keys = Object.keys(fileCache);
+            if (keys.length > 10) delete fileCache[keys[0]];
+            resolve(fileCache[fileId]);
+          } catch (err) {
+            reject(new Error("Görsel işlenemedi."));
           }
-          if (height > maxHeight) {
-            width = (width * maxHeight) / height;
-            height = maxHeight;
-          }
-
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, width, height);
-
-          const dataUrl = canvas.toDataURL("image/png", quality);
-          fileCache[fileId] = { dataUrl, width, height, originalSize: file.size };
-          resolve(fileCache[fileId]);
         };
         img.onerror = () => reject(new Error("Görsel yüklenemedi."));
+        img.src = e.target.result;
       };
       reader.onerror = () => reject(new Error("Dosya okunamadı."));
       reader.readAsDataURL(file);
@@ -286,7 +324,9 @@
       style.id = CONFIG.STYLE_ID;
       style.textContent = `
         :root { --c403-custom-avatar: url(${JSON.stringify(iconUrl)}); }
-        .top > .icon-image.has-icon, summoner-icon {
+        /* Sadece üst bardaki kendi simgemiz; genel "summoner-icon" kuralı
+           başka oyuncuların simgelerini de değiştiriyordu. */
+        .top > .icon-image.has-icon {
           content: var(--c403-custom-avatar) !important;
         }
       `;
@@ -296,6 +336,12 @@
     }
 
     observeDOM() {
+      // Her simge değişiminde yeni observer eklenmesin: eskisini kapat.
+      if (this.observer) {
+        this.observer.disconnect();
+        this.observer = null;
+      }
+
       const selector = [
         `lol-regalia-hovercard-v2-element[summoner-id="${this.summonerId}"]`,
         `lol-regalia-profile-v2-element[summoner-id="${this.summonerId}"]`,
@@ -304,30 +350,41 @@
       ].join(",");
 
       const schedule = () => {
+        if (this.disposed || document.hidden) return;
         clearTimeout(this._refreshTimer);
-        this._refreshTimer = setTimeout(refresh, 50);
+        // MutationObserver istemcide çok sık tetikleniyor: en fazla saniyede
+        // bir tarama yap, aksi halde sohbet/parti listesi sürekli taranıyordu.
+        const since = Date.now() - (this._lastRefresh || 0);
+        const delay = since >= 1000 ? 300 : 1000 - since;
+        this._refreshTimer = setTimeout(refresh, delay);
       };
 
       let activeRoots;
-      const visit = (root) => {
+      const visit = (root, ownRoot = true) => {
         activeRoots.add(root);
         if (!this.shadowObservers.has(root)) {
           const observer = new MutationObserver(schedule);
           observer.observe(root, { childList: true, subtree: true });
           this.shadowObservers.set(root, observer);
         }
-        if (!this.shadowStyles.has(root)) {
+        if (ownRoot && !this.shadowStyles.has(root)) {
           const style = document.createElement("style");
           style.textContent = ".lol-regalia-summoner-icon { background-image: var(--c403-custom-avatar) !important; }";
           this.shadowStyles.set(root, style);
           root.appendChild(style);
         }
         root.querySelectorAll("lol-regalia-crest-v2-element").forEach((crest) => {
-          if (crest.shadowRoot) visit(crest.shadowRoot);
+          // Parti listesindeki herkesin tepesine kendi simgemizi basmayalım:
+          // sadece voice-puuid bizim puuid'imizle eşleşen crest'i boya.
+          if (!crest.shadowRoot) return;
+          const crestPuuid = crest.getAttribute("voice-puuid") || crest.getAttribute("puuid");
+          const isOwnCrest = crestPuuid ? crestPuuid === this.puuid : ownRoot;
+          visit(crest.shadowRoot, isOwnCrest);
         });
       };
 
       const refresh = () => {
+        this._lastRefresh = Date.now();
         activeRoots = new Set();
         document.querySelectorAll(selector).forEach((element) => {
           if (element.shadowRoot) visit(element.shadowRoot);
@@ -373,6 +430,8 @@
     }
 
     async showIconModal() {
+      ["c403-bg-modal", "c403-profile-winloss-modal", "c403-skinviewer-info-modal", "c403-soloq-settings-modal"]
+        .forEach((id) => document.getElementById(id)?.remove());
       document.getElementById(CONFIG.MODAL_ID)?.remove();
 
       const modal = document.createElement("div");
@@ -502,7 +561,7 @@
           <!-- Sidebar -->
           <div style="width: 220px; background: #080d12; border-right: 1px solid rgba(200, 170, 110, 0.2); display: flex; flex-direction: column;">
             <div style="padding: 18px 16px; border-bottom: 1px solid rgba(200, 170, 110, 0.18); display: flex; align-items: center; gap: 12px;">
-              <div style="width: 44px; height: 44px; background: url('${logoUrl}') center / contain no-repeat; filter: drop-shadow(0 0 8px rgba(200,170,110,0.5)); flex-shrink: 0;"></div>
+              <div style="width: 44px; height: 44px; background: url('${logoUrl}') center / contain no-repeat; flex-shrink: 0;"></div>
               <div>
                 <div style="color: #f0e6d2; font-size: 14.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;">SİMGELER</div>
                 <div style="color: #c8aa6e; font-size: 11px; margin-top: 2px;">403Changer Modu</div>
@@ -791,16 +850,19 @@
         searchInput.focus();
       };
 
-      try {
-        allIcons = await this.loadIconCatalog();
-        if (modal.isConnected) {
-          filterIcons("");
-        }
-      } catch (err) {
-        if (modal.isConnected) {
-          grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 48px 0; color: #ff4655;">Simgeler yüklenemedi. Lütfen internet bağlantınızı kontrol edin.</div>';
-        }
-      }
+      // Katalog yüklenirken "Özel Simgeler" sekmesinin kontrolleri çalışmaya
+      // devam etsin diye await etmiyoruz.
+      this.loadIconCatalog()
+        .then((icons) => {
+          allIcons = icons;
+          if (!modal.isConnected) return;
+          filterIcons(searchInput.value.trim().toLowerCase());
+        })
+        .catch(() => {
+          if (modal.isConnected) {
+            grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 48px 0; color: #ff4655;">Simgeler yüklenemedi. Lütfen internet bağlantınızı kontrol edin.</div>';
+          }
+        });
 
       // Özel Simge Yükleme Kontrolleri
       const fileInput = content.querySelector("#c403-file-input");
@@ -813,8 +875,10 @@
 
       let pendingData = null;
       let pendingSource = null;
+      let urlRequestToken = 0;
 
       const resetPending = () => {
+        urlRequestToken++;
         pendingData = null;
         pendingSource = null;
         addCollectionBtn.disabled = true;
@@ -826,7 +890,14 @@
       };
 
       const setReadyPending = (dataUrl, labelText) => {
-        previewBox.innerHTML = `<img src="${dataUrl}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+        // innerHTML yerine DOM: URL içindeki tırnak/etiket önizlemeyi bozmasın.
+        const img = document.createElement("img");
+        img.src = dataUrl;
+        img.style.cssText = "width: 100%; height: 100%; border-radius: 50%; object-fit: cover;";
+        img.addEventListener("error", () => {
+          previewBox.textContent = "Görsel yüklenemedi";
+        }, { once: true });
+        previewBox.replaceChildren(img);
         addCollectionBtn.disabled = false;
         addCollectionBtn.style.background = "linear-gradient(135deg, #c8aa6e, #a08040)";
         addCollectionBtn.style.borderColor = "#f0e6d2";
@@ -885,16 +956,21 @@
 
         urlStatus.style.color = "#c8aa6e";
         urlStatus.textContent = "Görsel yükleniyor...";
+        const token = ++urlRequestToken;
         urlDebounce = setTimeout(async () => {
           try {
             previewBox.innerHTML = '<div style="width: 24px; height: 24px; border: 2px solid rgba(200,170,110,0.2); border-top: 2px solid #c8aa6e; border-radius: 50%; animation: c403Spin 0.9s linear infinite;"></div>';
             const imgData = await loadImageFromUrl(url);
+            if (token !== urlRequestToken || !modal.isConnected) return;
             pendingData = imgData;
             pendingSource = "url";
             urlStatus.style.color = "#0ac8b9";
-            urlStatus.textContent = `Görsel yüklendi (${imgData.width}x${imgData.height})`;
+            urlStatus.textContent = imgData.remote
+              ? "Görsel yüklendi (doğrudan bağlantı)"
+              : `Görsel yüklendi (${imgData.width}x${imgData.height})`;
             setReadyPending(imgData.dataUrl, "URL");
           } catch (err) {
+            if (token !== urlRequestToken || !modal.isConnected) return;
             urlStatus.style.color = "#ff4655";
             urlStatus.textContent = "Görsel indirilemedi. Bağlantıyı kontrol edin.";
             resetPending();
@@ -917,7 +993,11 @@
           }
         }
 
-        await this.addCustomIcon(name, pendingData.dataUrl);
+        const saved = await this.addCustomIcon(name, pendingData.dataUrl);
+        if (!saved) {
+          showToast("Simge kaydedilemedi (depolama dolu olabilir).", "error");
+          return;
+        }
         showToast("Özel simge koleksiyona eklendi!", "success");
 
         urlInput.value = "";
@@ -932,13 +1012,17 @@
 
     async addCustomIcon(name, dataUrl) {
       const list = (await safeDataStore.get(CONFIG.CUSTOM_ICONS_LIST_KEY, CONFIG.LEGACY_CUSTOM_ICONS_LIST_KEY)) || [];
+      if (list.length >= 30) {
+        showToast("Koleksiyon en fazla 30 simge alabilir.", "error");
+        return false;
+      }
       list.push({
         id: Date.now().toString(),
         name,
         dataUrl,
         addedAt: new Date().toISOString(),
       });
-      await safeDataStore.set(CONFIG.CUSTOM_ICONS_LIST_KEY, list);
+      return await safeDataStore.set(CONFIG.CUSTOM_ICONS_LIST_KEY, list);
     }
 
     async removeCustomIcon(iconId) {
@@ -997,13 +1081,26 @@
         deleteBtn.onmouseover = () => { deleteBtn.style.opacity = "1"; };
         deleteBtn.onmouseout = () => { deleteBtn.style.opacity = "0.65"; };
 
+        let deleteArmed = false;
+        let deleteTimer = null;
         deleteBtn.onclick = async (e) => {
           e.stopPropagation();
-          if (confirm(`"${icon.name}" simgesini koleksiyondan silmek istediğinize emin misiniz?`)) {
-            await this.removeCustomIcon(icon.id);
-            showToast("Özel simge silindi.", "info");
-            this.loadCustomIconsUI(content);
+          if (!deleteArmed) {
+            // CEF'te confirm() ana iş parçacığını kilitlediği için iki tıklı onay.
+            deleteArmed = true;
+            deleteBtn.title = "Silmek için tekrar tıkla";
+            deleteBtn.style.color = "#ff4655";
+            deleteTimer = setTimeout(() => {
+              deleteArmed = false;
+              deleteBtn.title = "Sil";
+              deleteBtn.style.color = "";
+            }, 3000);
+            return;
           }
+          clearTimeout(deleteTimer);
+          await this.removeCustomIcon(icon.id);
+          showToast("Özel simge silindi.", "info");
+          this.loadCustomIconsUI(content);
         };
 
         const bottomRow = document.createElement("div");

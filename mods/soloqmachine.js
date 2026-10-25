@@ -4,7 +4,7 @@
  * @name         SoloQMachine
  * @author       403Changer (Original by Yimikami)
  * @description  Otomatik maç kabul, otomatik sıraya girme, otomatik takdir, otomatik tekrar oyna ve arayüz sadeleştirme.
- * @version      1.0.0
+ * @version      1.1.0
  */
 
 (function () {
@@ -36,16 +36,81 @@
     },
   };
 
-  const deepMerge = (target, source) => {
-    for (const key of Object.keys(source)) {
-      if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
-        if (!target[key]) target[key] = {};
-        deepMerge(target[key], source[key]);
-      } else {
-        target[key] = source[key];
-      }
+  const MAX_DELAY_MS = 30000;
+
+  const clampDelay = (value, fallback = 0) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(MAX_DELAY_MS, Math.round(num)));
+  };
+
+  const asObject = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+
+  // İstemcinin kendi gezinme çubuklarını veya tüm sayfayı gizleyen seçiciler
+  // kullanıcı ayarından gelseler bile uygulanmaz: arayüz kullanılamaz hale geliyordu.
+  const FORBIDDEN_SELECTORS = new Set([
+    ".right-nav-menu",
+    ".left-nav-menu",
+    "html",
+    "body",
+    ":root",
+    "*",
+    "rcp-fe-viewport-root",
+  ]);
+
+  const isValidSelector = (selector) => {
+    if (typeof selector !== "string") return false;
+    const trimmed = selector.trim();
+    if (!trimmed || trimmed.length > 200) return false;
+    if (FORBIDDEN_SELECTORS.has(trimmed)) return false;
+    // Süslü parantez/noktalı virgül enjeksiyonuyla stil sayfası bozulmasın.
+    if (/[{};]/.test(trimmed)) return false;
+    try {
+      document.createDocumentFragment().querySelector(trimmed);
+      return true;
+    } catch (e) {
+      return false;
     }
-    return target;
+  };
+
+  // Bozuk / eski / elle düzenlenmiş ayarlar modun çökmesine yol açmasın.
+  const normalizeConfig = (raw) => {
+    const src = asObject(raw);
+    const base = structuredClone(DEFAULT_CONFIG);
+
+    const autoAccept = asObject(src.autoAccept);
+    base.autoAccept = {
+      enabled: autoAccept.enabled !== false,
+      delayMs: clampDelay(autoAccept.delayMs, 0),
+      muteLoopSound: !!autoAccept.muteLoopSound,
+    };
+
+    const autoHonor = asObject(src.autoHonor);
+    base.autoHonor = { enabled: autoHonor.enabled !== false };
+
+    const autoPlayAgain = asObject(src.autoPlayAgain);
+    base.autoPlayAgain = {
+      enabled: autoPlayAgain.enabled !== false,
+      delayMs: clampDelay(autoPlayAgain.delayMs, 2000),
+    };
+
+    // Kullanıcı talebi: otomatik sıraya girme kesin olarak devre dışı
+    // (oyna butonuna basmaz), hızlı dereceli lobi de kullanılmıyor.
+    base.autoMatchmaking = { enabled: false, delayMs: 0, minimumMembers: 1, waitForInvites: false };
+    base.instantRankedLobby = { enabled: false };
+
+    const remove = asObject(src.removeElements);
+    const selectors = Array.isArray(remove.selectors) ? remove.selectors.filter(isValidSelector) : [];
+    base.removeElements = {
+      enabled: !!remove.enabled,
+      // Hepsi geçersizse varsayılan listeye dön (boş liste = hiçbir şey gizlenmez).
+      selectors: selectors.length ? selectors.slice(0, 20) : structuredClone(DEFAULT_CONFIG.removeElements.selectors),
+    };
+
+    const queueId = Number(src.queueId);
+    base.queueId = Number.isFinite(queueId) && queueId > 0 ? queueId : DEFAULT_CONFIG.queueId;
+
+    return base;
   };
 
   const loadConfig = () => {
@@ -65,30 +130,16 @@
     if (saved) {
       try {
         const parsed = typeof saved === "string" ? JSON.parse(saved) : saved;
-        const merged = deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
-        if (merged.instantRankedLobby) merged.instantRankedLobby.enabled = false;
-        // Kullanici talebi: Otomatik siraya girme kesin olarak devre disi (oyna butonuna basmaz)
-        merged.autoMatchmaking = { enabled: false, delayMs: 0, minimumMembers: 1, waitForInvites: false };
-        if (merged.removeElements && Array.isArray(merged.removeElements.selectors)) {
-          merged.removeElements.selectors = merged.removeElements.selectors.filter(
-            (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
-          );
-        }
-        return merged;
+        return normalizeConfig(parsed);
       } catch (e) {}
     }
 
-    return structuredClone(DEFAULT_CONFIG);
+    return normalizeConfig(null);
   };
 
   const saveConfig = (config) => {
-    config.autoMatchmaking = { enabled: false, delayMs: 0, minimumMembers: 1, waitForInvites: false };
-    if (config.removeElements && Array.isArray(config.removeElements.selectors)) {
-      config.removeElements.selectors = config.removeElements.selectors.filter(
-        (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
-      );
-    }
-    const serialized = JSON.stringify(config);
+    CONFIG = normalizeConfig(config);
+    const serialized = JSON.stringify(CONFIG);
     try {
       if (window.DataStore && typeof window.DataStore.set === "function") {
         window.DataStore.set(STORAGE_KEY, serialized);
@@ -103,8 +154,12 @@
   let CONFIG = loadConfig();
 
   const lcuFetch = async (url, method = "GET", body = null) => {
-    const opts = { method, headers: { "Content-Type": "application/json" } };
-    if (body) opts.body = JSON.stringify(body);
+    const opts = { method, headers: {} };
+    // GET isteklerinde Content-Type göndermek gereksiz preflight/ağ yükü çıkarıyor.
+    if (body) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
     const res = await fetch(url, opts);
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -119,14 +174,16 @@
       this._observer = null;
       this._phasePoller = null;
       this._autoAcceptTimer = null;
-      this._autoMatchmakingTimer = null;
       this._autoHonorTimer = null;
       this._autoPlayAgainTimer = null;
+      this._audioTimer = null;
       this._currentPhase = null;
       this._disposed = false;
+      this._polling = false;
       this._actionRevision = 0;
-      this._matchmakingRevision = 0;
       this._buttonHandlers = new Map();
+      this._honoredGames = new Set();
+      this._playAgainSent = false;
       this.init();
     }
 
@@ -144,18 +201,43 @@
         "sfx-readycheck-sr-portal",
       ];
 
-      const dummySound = {
-        play: () => Promise.resolve(null),
-        stop: () => Promise.resolve(null),
-        pause: () => Promise.resolve(null),
-        dispose: () => Promise.resolve(null),
-        setVolume: () => {},
-        getVolume: () => 0,
-        isPlaying: () => false,
-        on: () => {},
-        off: () => {},
-        trigger: () => {},
-      };
+      // Eksik metot yüzünden istemcinin ses motoru hata vermesin:
+      // bilinen tüm Sound API'si no-op, bilinmeyenler de güvenli varsayılan döner.
+      const dummySound = new Proxy(
+        {
+          play: () => Promise.resolve(null),
+          stop: () => Promise.resolve(null),
+          pause: () => Promise.resolve(null),
+          resume: () => Promise.resolve(null),
+          dispose: () => Promise.resolve(null),
+          destroy: () => Promise.resolve(null),
+          seek: () => Promise.resolve(null),
+          setVolume: () => {},
+          getVolume: () => 0,
+          setLoop: () => {},
+          isLooping: () => false,
+          isPlaying: () => false,
+          getDuration: () => 0,
+          getCurrentTime: () => 0,
+          setTime: () => {},
+          on: () => {},
+          off: () => {},
+          once: () => {},
+          trigger: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          duration: 0,
+          volume: 0,
+          loop: false,
+        },
+        {
+          get(target, prop) {
+            if (prop in target) return target[prop];
+            if (typeof prop === "symbol") return undefined;
+            return () => {};
+          },
+        }
+      );
 
       const hookChannels = (audioPlugin) => {
         try {
@@ -186,23 +268,35 @@
 
       if (window.rcp && typeof window.rcp.whenReady === "function") {
         window.rcp.whenReady("rcp-fe-audio").then(hookChannels).catch(() => {});
-      } else {
-        const timer = setInterval(() => {
-          if (window.rcp && typeof window.rcp.whenReady === "function") {
-            clearInterval(timer);
-            window.rcp.whenReady("rcp-fe-audio").then(hookChannels).catch(() => {});
-          }
-        }, 1000);
+        return;
       }
+
+      // rcp henüz hazır değilse sınırlı süre bekle; sonsuza kadar interval bırakma.
+      let attempts = 0;
+      this._audioTimer = setInterval(() => {
+        attempts++;
+        if (window.rcp && typeof window.rcp.whenReady === "function") {
+          clearInterval(this._audioTimer);
+          this._audioTimer = null;
+          window.rcp.whenReady("rcp-fe-audio").then(hookChannels).catch(() => {});
+        } else if (attempts >= 60) {
+          clearInterval(this._audioTimer);
+          this._audioTimer = null;
+        }
+      }, 1000);
     }
 
     cleanup() {
       this._disposed = true;
       this._actionRevision++;
-      this.cancelAutoMatchmaking();
       this.cancelAutoAccept();
       this.cancelAutoPlayAgain();
       clearTimeout(this._autoHonorTimer);
+      this._autoHonorTimer = null;
+      if (this._audioTimer) {
+        clearInterval(this._audioTimer);
+        this._audioTimer = null;
+      }
       if (this._phasePoller) clearInterval(this._phasePoller);
       if (this._observer) this._observer.disconnect();
 
@@ -227,14 +321,10 @@
 
       let extraRules = "";
       if (CONFIG.removeElements && CONFIG.removeElements.enabled) {
-        const safeSelectors = (CONFIG.removeElements.selectors || []).filter(
-          (s) => s !== ".right-nav-menu" && s !== ".left-nav-menu"
-        );
+        const safeSelectors = (CONFIG.removeElements.selectors || []).filter(isValidSelector);
         extraRules = [
           ...safeSelectors.map((s) => `${s} { display: none !important; }`),
-          ".custom-game-tournament-code-container { display: none !important; }",
           '[data-soloq-machine-hidden="true"] { display: none !important; }',
-          '#c403-nav-btn, .c403-nav-btn, lol-uikit-navigation-item.menu_item_Golden, .menu_item_Golden { display: flex !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; }',
         ].join("\n");
       }
 
@@ -464,17 +554,17 @@
     onPhaseChange(phase, prev) {
       this._actionRevision++;
       clearTimeout(this._autoHonorTimer);
+      this._autoHonorTimer = null;
+
+      // Oyun bitti/tekrar lobi akışına dönüldüyse "tekrar oyna" kilidini aç.
+      if (phase !== "EndOfGame" && phase !== "WaitingForStats" && phase !== "PreEndOfGame") {
+        this._playAgainSent = false;
+      }
 
       if (phase === "ReadyCheck") {
         this.scheduleAutoAccept();
       } else {
         this.cancelAutoAccept();
-      }
-
-      if (phase === "Lobby") {
-        this.scheduleAutoMatchmaking();
-      } else {
-        this.cancelAutoMatchmaking();
       }
 
       if (phase === "PreEndOfGame") {
@@ -483,7 +573,7 @@
 
       if (phase === "EndOfGame" || phase === "WaitingForStats") {
         this.scheduleAutoPlayAgain(phase);
-      } else if (phase !== "PreEndOfGame") {
+      } else {
         this.cancelAutoPlayAgain();
       }
     }
@@ -497,7 +587,7 @@
     scheduleAutoAccept() {
       this.cancelAutoAccept();
       if (!CONFIG.autoAccept.enabled || this._disposed) return;
-      const delay = CONFIG.autoAccept.delayMs || 0;
+      const delay = clampDelay(CONFIG.autoAccept.delayMs, 0);
       const revision = this._actionRevision;
       this._autoAcceptTimer = setTimeout(() => this.acceptMatch(revision), delay);
     }
@@ -512,6 +602,8 @@
     async acceptMatch(revision = this._actionRevision) {
       try {
         if (this._disposed || revision !== this._actionRevision || !CONFIG.autoAccept.enabled) return;
+        // Gecikme sırasında maç iptal edilmiş olabilir; fazı tekrar doğrula.
+        if (this._currentPhase !== "ReadyCheck") return;
         await lcuFetch("/lol-matchmaking/v1/ready-check/accept", "POST");
         if (window.Toast && typeof window.Toast.success === "function") {
           window.Toast.success("Maç otomatik kabul edildi!");
@@ -521,38 +613,39 @@
       }
     }
 
-    scheduleAutoMatchmaking() {
-      // Kesin olarak devre disi: Asla siraya girmez veya oyna butonuna basmaz
-      this.cancelAutoMatchmaking();
-    }
-
-    cancelAutoMatchmaking() {
-      this._matchmakingRevision++;
-      if (this._autoMatchmakingTimer) {
-        clearTimeout(this._autoMatchmakingTimer);
-        this._autoMatchmakingTimer = null;
-      }
-    }
-
-    async tryStartMatchmaking() {
-      // Kesin olarak devre disi: Asla oyna / mac ara butonuna basmaz
-      return;
-    }
+    // Otomatik sıraya girme/oyna butonu kalıcı olarak devre dışı; bu yüzden
+    // ilgili zamanlayıcı ve istek kodları tamamen kaldırıldı.
 
     scheduleAutoHonor() {
-      if (!CONFIG.autoHonor.enabled) return;
+      if (!CONFIG.autoHonor.enabled || this._disposed) return;
       const revision = this._actionRevision;
-      this._autoHonorTimer = setTimeout(() => this.honorPlayer(revision), 1500);
+      let attempt = 0;
+
+      const run = async () => {
+        if (this._disposed || revision !== this._actionRevision || !CONFIG.autoHonor.enabled) return;
+        const done = await this.honorPlayer();
+        if (done) return;
+        attempt++;
+        // Oylama ekranı hemen hazır olmayabiliyor; kısa aralıklarla birkaç kez dene.
+        if (attempt < 6) {
+          this._autoHonorTimer = setTimeout(run, 1500);
+        }
+      };
+
+      this._autoHonorTimer = setTimeout(run, 1500);
     }
 
-    async honorPlayer(revision = this._actionRevision) {
+    async honorPlayer() {
       try {
         const ballot = await lcuFetch("/lol-honor-v2/v1/ballot");
-        if (!ballot?.gameId || !Array.isArray(ballot.eligibleAllies)) return;
-        if (ballot.votePool && ballot.votePool.votes <= 0) return;
+        if (!ballot || !ballot.gameId) return false;
+        // Aynı maç için iki kez takdir göndermeyelim.
+        if (this._honoredGames.has(ballot.gameId)) return true;
+        if (!Array.isArray(ballot.eligibleAllies) || !ballot.eligibleAllies.length) return false;
+        if (ballot.votePool && Number(ballot.votePool.votes) <= 0) return true;
 
         const candidates = ballot.eligibleAllies.filter((p) => !p.botPlayer && p.puuid && p.summonerId);
-        if (!candidates.length) return;
+        if (!candidates.length) return true;
 
         const target = candidates[Math.floor(Math.random() * candidates.length)];
         await lcuFetch("/lol-honor-v2/v1/honor-player", "POST", {
@@ -561,20 +654,49 @@
           summonerId: target.summonerId,
           puuid: target.puuid,
         });
+
+        this._honoredGames.add(ballot.gameId);
+        if (this._honoredGames.size > 20) {
+          const oldest = this._honoredGames.values().next().value;
+          this._honoredGames.delete(oldest);
+        }
+
         if (window.Toast && typeof window.Toast.success === "function") {
           window.Toast.success("Takım arkadaşına otomatik takdir verildi!");
         }
+        return true;
       } catch (err) {
         console.warn("[SoloQMachine] Otomatik takdir verilemedi:", err);
+        return false;
       }
     }
 
     scheduleAutoPlayAgain(phase) {
       this.cancelAutoPlayAgain();
       if (!CONFIG.autoPlayAgain.enabled || this._disposed) return;
-      const delay = phase === "WaitingForStats" ? Math.max(CONFIG.autoPlayAgain.delayMs, 5000) : CONFIG.autoPlayAgain.delayMs;
+      // WaitingForStats → EndOfGame geçişinde aynı oyun için ikinci kez
+      // "tekrar oyna" göndermeyelim.
+      if (this._playAgainSent) return;
+
+      const baseDelay = clampDelay(CONFIG.autoPlayAgain.delayMs, 2000);
+      const delay = phase === "WaitingForStats" ? Math.max(baseDelay, 5000) : baseDelay;
       const revision = this._actionRevision;
-      this._autoPlayAgainTimer = setTimeout(() => this.playAgain(revision), delay);
+      let attempt = 0;
+
+      const run = async () => {
+        if (this._disposed || revision !== this._actionRevision || !CONFIG.autoPlayAgain.enabled) return;
+        const ok = await this.playAgain();
+        if (ok) {
+          this._playAgainSent = true;
+          return;
+        }
+        attempt++;
+        if (attempt < 4) {
+          this._autoPlayAgainTimer = setTimeout(run, 3000);
+        }
+      };
+
+      this._autoPlayAgainTimer = setTimeout(run, delay);
     }
 
     cancelAutoPlayAgain() {
@@ -584,12 +706,23 @@
       }
     }
 
-    async playAgain(revision = this._actionRevision) {
+    async playAgain() {
       try {
-        if (this._disposed || revision !== this._actionRevision || !CONFIG.autoPlayAgain.enabled) return;
+        if (this._disposed || !CONFIG.autoPlayAgain.enabled) return false;
+
+        // Zaten bir lobideysek tekrar çağırmak "lobi zaten var" hatası üretiyor.
+        try {
+          const lobby = await lcuFetch("/lol-lobby/v2/lobby");
+          if (lobby) return true;
+        } catch (e) {
+          if (!String(e.message || "").includes("404")) throw e;
+        }
+
         await lcuFetch("/lol-lobby/v2/play-again", "POST");
+        return true;
       } catch (e) {
         console.warn("[SoloQMachine] Tekrar oyna başarısız:", e);
+        return false;
       }
     }
 
@@ -675,6 +808,10 @@
       </div>
     `;
 
+    modal.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeSettingsModal();
+    });
+
     modal.addEventListener("click", (e) => {
       if (e.target === modal || e.target.dataset.act === "close") {
         closeSettingsModal();
@@ -714,20 +851,21 @@
 
     modal.addEventListener("change", (e) => {
       const input = e.target;
-      if (input.dataset.key) {
-        const key = input.dataset.key;
-        let val = parseFloat(input.value);
-        if (isNaN(val)) val = 0;
+      if (!input.dataset?.key) return;
+      const key = input.dataset.key;
+      let val = parseFloat(input.value);
+      if (!Number.isFinite(val)) val = 0;
+      // Arayüzde 0-30 sn aralığı var; elle yazılan değerleri de sınırla.
+      val = Math.max(0, Math.min(30, val));
 
-        if (key === "autoAccept.delaySec") CONFIG.autoAccept.delayMs = Math.round(val * 1000);
-        else if (key === "autoMatchmaking.delaySec") CONFIG.autoMatchmaking.delayMs = Math.round(val * 1000);
-        else if (key === "autoPlayAgain.delaySec") CONFIG.autoPlayAgain.delayMs = Math.round(val * 1000);
-        else if (key === "autoMatchmaking.minimumMembers") CONFIG.autoMatchmaking.minimumMembers = Math.max(1, Math.min(5, Math.round(val)));
+      if (key === "autoAccept.delaySec") CONFIG.autoAccept.delayMs = Math.round(val * 1000);
+      else if (key === "autoPlayAgain.delaySec") CONFIG.autoPlayAgain.delayMs = Math.round(val * 1000);
+      else return;
 
-        saveConfig(CONFIG);
-        if (window.__c403SoloQInstance) {
-          window.__c403SoloQInstance.recheckCurrentPhase();
-        }
+      input.value = val.toFixed(1);
+      saveConfig(CONFIG);
+      if (window.__c403SoloQInstance) {
+        window.__c403SoloQInstance.recheckCurrentPhase();
       }
     });
 
@@ -750,15 +888,25 @@
     };
 
     setInput("autoAccept.delaySec", ((CONFIG.autoAccept.delayMs || 0) / 1000).toFixed(1));
-    setInput("autoMatchmaking.delaySec", ((CONFIG.autoMatchmaking.delayMs || 3000) / 1000).toFixed(1));
     setInput("autoPlayAgain.delaySec", ((CONFIG.autoPlayAgain.delayMs || 2000) / 1000).toFixed(1));
-    setInput("autoMatchmaking.minimumMembers", CONFIG.autoMatchmaking.minimumMembers || 1);
+  }
+
+  // Aynı anda iki mod ayar penceresi açık kalmasın (z-index çakışması).
+  function closeOtherModals() {
+    [
+      "c403-bg-modal",
+      "c403-profile-winloss-modal",
+      "c403-icon-swapper-modal",
+      "c403-skinviewer-info-modal",
+    ].forEach((id) => document.getElementById(id)?.remove());
   }
 
   function openSettingsModal() {
+    closeOtherModals();
     const modal = ensureModal();
     updateModalUI(modal);
     modal.classList.add("c403-open");
+    modal.querySelector(".c403-sq-card")?.focus?.();
   }
 
   function closeSettingsModal() {
@@ -770,7 +918,16 @@
   window.__c403ModSettings = window.__c403ModSettings || {};
   window.__c403ModSettings["soloqmachine"] = openSettingsModal;
 
-  window.addEventListener("load", () => {
+  const start = () => {
+    if (window.__c403SoloQInstance) return;
     window.__c403SoloQInstance = new SoloQController();
-  });
+  };
+
+  // Plugin, sayfa "load" olduktan sonra da enjekte edilebilir; o durumda
+  // load olayı bir daha tetiklenmez ve otomasyon hiç çalışmazdı.
+  if (document.readyState === "complete") {
+    start();
+  } else {
+    window.addEventListener("load", start, { once: true });
+  }
 })();

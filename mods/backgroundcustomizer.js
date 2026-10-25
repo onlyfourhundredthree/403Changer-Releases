@@ -5,7 +5,7 @@
  * @author       403Changer
  * @description  İstemci arka planına özel görsel ve video temaları uygular.
  *               Kullanıcılar kendi temalarını kolayca oluşturabilir, düzenleyebilir ve kaydedebilir.
- * @version      2.3.0
+ * @version      2.4.0
  */
 
 (function () {
@@ -170,10 +170,6 @@
         opacity: 0 !important;
       }
 
-      .c403-bg-active .placeholder-invited-container {
-        display: none !important;
-      }
-
       /* Modal Arka Plan & Çerçeve */
       #${MODAL_ID} {
         position: fixed !important;
@@ -228,7 +224,6 @@
         width: 40px;
         height: 40px;
         background: url("/asset/logo.png") center / contain no-repeat;
-        filter: drop-shadow(0 0 10px rgba(200, 170, 110, 0.65));
       }
 
       #${MODAL_ID} .c403-bg-titles h2 {
@@ -635,24 +630,42 @@
   }
 
   // --- Arka Planı DOM'a Uygulama ---
+  let failedThemeUrl = null;
+
+  function isWebUrl(value) {
+    if (typeof value !== "string" || !value.trim()) return false;
+    try {
+      const parsed = new URL(value, window.location.href);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function removeBackground() {
+    const container = document.getElementById(BG_CONTAINER_ID);
+    if (container) container.remove();
+    document.body.classList.remove("c403-bg-active");
+  }
+
   function applyActiveBackground() {
-    let container = document.getElementById(BG_CONTAINER_ID);
-
-    if (!currentState.enabled) {
-      if (container) container.remove();
-      document.body.classList.remove("c403-bg-active");
-      return;
-    }
-
     const theme = currentState.themes.find((t) => t.id === currentState.activeThemeId) || currentState.themes[0];
-    if (!theme || !theme.url) {
-      if (container) container.remove();
-      document.body.classList.remove("c403-bg-active");
+
+    // Arka planı yalnızca gerçekten yüklenebilen bir görsel/video için açarız.
+    // Aksi halde istemci arka planı şeffaflaşır ve lobi siyah kalır.
+    if (!currentState.enabled || !theme || !isWebUrl(theme.url)) {
+      removeBackground();
       return;
     }
 
-    document.body.classList.add("c403-bg-active");
+    // Yüklenemeyen tema her 2.5 sn'de yeniden denenip bildirim yağmuruna
+    // dönüşmesin; kullanıcı temayı yeniden seçerse tekrar denenir.
+    if (theme.url === failedThemeUrl) {
+      removeBackground();
+      return;
+    }
 
+    let container = document.getElementById(BG_CONTAINER_ID);
     const viewport = document.getElementById("rcp-fe-viewport-root") || document.body;
     if (!container) {
       container = document.createElement("div");
@@ -663,29 +676,54 @@
     }
 
     const isVideo = /\.(mp4|webm|ogg)($|\?)/i.test(theme.url);
-    const existingMedia = container.querySelector(".c403-bg-media");
-
     const opacity = theme.opacity != null ? theme.opacity : 0.35;
     const blur = theme.blur ? `blur(${theme.blur}px)` : "none";
+    const existingMedia = container.querySelector(".c403-bg-media");
+    const sameMedia = existingMedia &&
+      existingMedia.dataset.url === theme.url &&
+      existingMedia.tagName === (isVideo ? "VIDEO" : "IMG");
 
-    if (isVideo) {
-      if (!existingMedia || existingMedia.tagName !== "VIDEO" || existingMedia.src !== theme.url) {
-        container.innerHTML = `
-          <video class="c403-bg-media" autoplay loop muted playsinline src="${theme.url}"></video>
-        `;
-      }
-    } else {
-      if (!existingMedia || existingMedia.tagName !== "DIV" || existingMedia.style.backgroundImage.indexOf(theme.url) === -1) {
-        container.innerHTML = `
-          <div class="c403-bg-media" style="background-image: url('${theme.url}')"></div>
-        `;
-      }
+    if (sameMedia) {
+      existingMedia.style.opacity = opacity;
+      existingMedia.style.filter = blur;
+      document.body.classList.add("c403-bg-active");
+      return;
     }
 
-    const activeEl = container.querySelector(".c403-bg-media");
-    if (activeEl) {
-      activeEl.style.opacity = opacity;
-      activeEl.style.filter = blur;
+    const media = document.createElement(isVideo ? "video" : "img");
+    media.className = "c403-bg-media";
+    media.dataset.url = theme.url;
+    media.style.opacity = opacity;
+    media.style.filter = blur;
+
+    if (isVideo) {
+      media.autoplay = true;
+      media.loop = true;
+      media.muted = true;
+      media.playsInline = true;
+    }
+
+    const onReady = () => {
+      if (!media.isConnected) return;
+      document.body.classList.add("c403-bg-active");
+    };
+    const onError = () => {
+      if (!media.isConnected) return;
+      failedThemeUrl = media.dataset.url || theme.url;
+      document.body.classList.remove("c403-bg-active");
+      if (media.parentNode) media.remove();
+      console.warn("[403-BG] Tema medyası yüklenemedi:", theme.url);
+      showToast("Tema görseli yüklenemedi, arka plan kapatıldı.");
+    };
+
+    media.addEventListener(isVideo ? "loadeddata" : "load", onReady, { once: true });
+    media.addEventListener("error", onError, { once: true });
+
+    container.replaceChildren(media);
+    document.body.classList.remove("c403-bg-active");
+    media.src = theme.url;
+    if (isVideo) {
+      media.play().catch(() => {});
     }
   }
 
@@ -760,23 +798,41 @@
     const toggle = modal.querySelector("#c403-toggle-enable");
     toggle.addEventListener("click", () => {
       currentState.enabled = !currentState.enabled;
+      if (currentState.enabled) failedThemeUrl = null;
       toggle.classList.toggle("active", currentState.enabled);
       saveState(currentState);
       applyActiveBackground();
+      renderGrid();
       showToast(currentState.enabled ? "Arka plan teması aktifleştirildi." : "Arka plan kapatıldı.");
     });
 
     modal.querySelector("#c403-btn-reset-default").addEventListener("click", () => {
+      const defaults = structuredClone(DEFAULT_STATE);
+      // "Varsayılana sıfırla" = özel arka planı kapat, istemcinin kendi
+      // arka planına dön (tema seçimi de varsayılana çekilir).
       currentState.enabled = false;
+      currentState.activeThemeId = defaults.activeThemeId;
+      if (!currentState.themes.some((t) => t.id === defaults.activeThemeId)) {
+        currentState.themes.unshift(defaults.themes[0]);
+      }
       toggle.classList.remove("active");
+      failedThemeUrl = null;
       saveState(currentState);
       applyActiveBackground();
+      renderGrid();
       showToast("İstemci varsayılan arka planına döndürüldü.");
     });
 
     modal.querySelector("#c403-btn-add-theme").addEventListener("click", () => {
       openEditDialog(null);
     });
+
+    // Slider her pikselde kaydedilmesin: önizleme anında, kayıt 200 ms sonra.
+    let saveTimer = null;
+    const queueSave = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => saveState(currentState), 200);
+    };
 
     const opSlider = modal.querySelector("#c403-slider-opacity");
     const opLabel = modal.querySelector("#c403-label-opacity");
@@ -786,8 +842,8 @@
       const cur = currentState.themes.find((t) => t.id === currentState.activeThemeId);
       if (cur) {
         cur.opacity = val;
-        saveState(currentState);
         applyActiveBackground();
+        queueSave();
       }
     });
 
@@ -799,8 +855,8 @@
       const cur = currentState.themes.find((t) => t.id === currentState.activeThemeId);
       if (cur) {
         cur.blur = val;
-        saveState(currentState);
         applyActiveBackground();
+        queueSave();
       }
     });
 
@@ -829,13 +885,16 @@
         const isActive = currentState.enabled && theme.id === currentState.activeThemeId;
         const isVideo = /\.(mp4|webm|ogg)($|\?)/i.test(theme.url);
 
+        const safeUrl = escapeHtml(theme.url);
+        const safeId = escapeHtml(theme.id);
+
         return `
-          <div class="c403-theme-card ${isActive ? "active" : ""}" data-id="${theme.id}">
+          <div class="c403-theme-card ${isActive ? "active" : ""}" data-id="${safeId}">
             <div class="c403-card-preview">
               ${isVideo ? `
-                <video class="c403-card-img" muted loop onmouseover="this.play()" onmouseout="this.pause()" src="${theme.url}"></video>
+                <video class="c403-card-img" muted loop playsinline preload="metadata" src="${safeUrl}"></video>
               ` : `
-                <img class="c403-card-img" src="${theme.url}" loading="lazy" onerror="this.src='/asset/logo.png'">
+                <img class="c403-card-img" src="${safeUrl}" loading="lazy" referrerpolicy="no-referrer">
               `}
               ${isActive ? '<div class="c403-card-badge">Aktif</div>' : ""}
             </div>
@@ -845,17 +904,30 @@
                 <div class="c403-card-author">${escapeHtml(theme.author || "Kullanıcı")}</div>
               </div>
               <div class="c403-card-actions">
-                <button type="button" class="c403-btn-select ${isActive ? "selected" : ""}" data-act="select" data-id="${theme.id}">
+                <button type="button" class="c403-btn-select ${isActive ? "selected" : ""}" data-act="select" data-id="${safeId}">
                   ${isActive ? "Seçili" : "Uygula"}
                 </button>
-                <button type="button" class="c403-card-icon-btn" data-act="edit" data-id="${theme.id}" title="Düzenle">✎</button>
-                <button type="button" class="c403-card-icon-btn delete" data-act="delete" data-id="${theme.id}" title="Sil">✕</button>
+                <button type="button" class="c403-card-icon-btn" data-act="edit" data-id="${safeId}" title="Düzenle">✎</button>
+                <button type="button" class="c403-card-icon-btn delete" data-act="delete" data-id="${safeId}" title="Sil">✕</button>
               </div>
             </div>
           </div>
         `;
       })
       .join("");
+
+    // Kart önizlemeleri: hatalı görselde bir kez logoya düş, videoyu sadece hover'da oynat.
+    grid.querySelectorAll("img.c403-card-img").forEach((img) => {
+      img.addEventListener("error", () => {
+        if (img.dataset.fallback) return;
+        img.dataset.fallback = "1";
+        img.src = "/asset/logo.png";
+      }, { once: true });
+    });
+    grid.querySelectorAll("video.c403-card-img").forEach((video) => {
+      video.addEventListener("mouseenter", () => video.play().catch(() => {}));
+      video.addEventListener("mouseleave", () => video.pause());
+    });
 
     // Kart butonları dinleyicileri
     grid.querySelectorAll("[data-act]").forEach((btn) => {
@@ -868,6 +940,7 @@
         if (act === "select") {
           currentState.activeThemeId = id;
           currentState.enabled = true;
+          failedThemeUrl = null;
           modal.querySelector("#c403-toggle-enable").classList.add("active");
           saveState(currentState);
           applyActiveBackground();
@@ -951,8 +1024,8 @@
       const name = nameInput.value.trim() || "Özel Tema";
       const url = urlInput.value.trim();
 
-      if (!url) {
-        showToast("Lütfen geçerli bir görsel veya video linki girin!");
+      if (!isWebUrl(url)) {
+        showToast("Lütfen http(s) ile başlayan geçerli bir görsel veya video linki girin!");
         return;
       }
 
@@ -977,6 +1050,7 @@
       }
 
       currentState.enabled = true;
+      failedThemeUrl = null;
       saveState(currentState);
       applyActiveBackground();
       dialog.remove();
@@ -995,7 +1069,18 @@
       .replace(/'/g, "&#039;");
   }
 
+  // Aynı anda iki mod ayar penceresi açık kalmasın (z-index çakışması).
+  function closeOtherModals() {
+    [
+      "c403-profile-winloss-modal",
+      "c403-icon-swapper-modal",
+      "c403-skinviewer-info-modal",
+      "c403-soloq-settings-modal",
+    ].forEach((id) => document.getElementById(id)?.remove());
+  }
+
   function openModal() {
+    closeOtherModals();
     injectStyles();
     const modal = ensureModal();
     renderGrid();
@@ -1021,12 +1106,23 @@
 
     // Hafif ve throttled kontrol (CEF kasmadan arka planı korur)
     let lastCheck = 0;
+    let lastRetry = 0;
     const throttledApply = () => {
+      if (document.hidden || !currentState.enabled) return;
       const now = Date.now();
       if (now - lastCheck < 1500) return;
       lastCheck = now;
+
       const viewport = document.getElementById("rcp-fe-viewport-root");
-      if (viewport && !document.getElementById(BG_CONTAINER_ID)) {
+      if (!viewport) return;
+
+      const container = document.getElementById(BG_CONTAINER_ID);
+      const misplaced = container && container.parentElement !== viewport;
+      const missing = !container;
+      const noMedia = container && !container.querySelector(".c403-bg-media");
+      // Yükleme başarısız olduysa hemen tekrar denemeyelim (60 sn bekle).
+      if (missing || misplaced || (noMedia && now - lastRetry > 60000)) {
+        lastRetry = now;
         applyActiveBackground();
       }
     };

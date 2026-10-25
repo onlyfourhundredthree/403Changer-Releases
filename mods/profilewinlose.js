@@ -5,7 +5,7 @@
  * @author       403Changer
  * @description  Sihirdar profilinde kullanıcının isminin tam altında son maçların
  *               G/M (W/L) istatistiklerini, kazanma oranını ve KDA'yı gösterir.
- * @version      2.3.0
+ * @version      2.4.0
  */
 
 (function () {
@@ -99,6 +99,11 @@
   let CONFIG = { ...DEFAULT_CONFIG };
   const cache = new Map();
   let cachedCurrentSummonerPuuid = null;
+  let cachedCurrentSummonerId = null;
+  let cachedCurrentSummonerName = null;
+  let summonerFetchedAt = 0;
+  let summonerFailedAt = 0;
+  let summonerFetchPromise = null;
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -109,8 +114,10 @@
         display: flex !important;
         flex-direction: row !important;
         align-items: center !important;
-        width: fit-content !important;
+        width: max-content !important;
         max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
         margin-top: 8px !important;
         margin-bottom: 4px !important;
         padding: 0 !important;
@@ -122,9 +129,11 @@
 
       .c403-pwl-pill {
         display: inline-flex;
+        flex-wrap: wrap;
         flex-direction: row;
         align-items: center;
-        gap: 12px;
+        gap: 8px 12px;
+        max-width: 100%;
         padding: 6px 14px;
         background: radial-gradient(120% 100% at 50% 0%, rgba(200, 170, 110, 0.18), rgba(10, 16, 24, 0.95));
         border: 1px solid rgba(200, 170, 110, 0.5);
@@ -258,7 +267,6 @@
         width: 32px;
         height: 32px;
         background: url("/asset/logo.png") center / contain no-repeat;
-        filter: drop-shadow(0 0 8px rgba(200, 170, 110, 0.6));
       }
 
       .c403-pwl-titles h2 {
@@ -380,15 +388,33 @@
     }
 
     async fetchCurrentSummonerOnce() {
-      try {
-        const res = await fetch("/lol-summoner/v1/current-summoner");
-        if (res.ok) {
-          const me = await res.json();
-          if (me && me.puuid) {
-            cachedCurrentSummonerPuuid = me.puuid;
+      if (summonerFetchPromise) return summonerFetchPromise;
+      if (Date.now() - summonerFetchedAt < 5 * 60 * 1000) return;
+      // Başarısız denemelerde her 1.5 sn'de istek atmayalım.
+      if (Date.now() - summonerFailedAt < 30000) return;
+
+      summonerFetchPromise = (async () => {
+        try {
+          const res = await fetch("/lol-summoner/v1/current-summoner");
+          if (res.ok) {
+            const me = await res.json();
+            if (me && me.puuid) {
+              cachedCurrentSummonerPuuid = me.puuid;
+              cachedCurrentSummonerId = me.summonerId != null ? String(me.summonerId) : null;
+              cachedCurrentSummonerName = me.gameName || me.displayName || null;
+              summonerFetchedAt = Date.now();
+            }
+          } else {
+            summonerFailedAt = Date.now();
           }
+        } catch (e) {
+          summonerFailedAt = Date.now();
+        } finally {
+          summonerFetchPromise = null;
         }
-      } catch (e) {}
+      })();
+
+      return summonerFetchPromise;
     }
 
     cleanup() {
@@ -399,7 +425,7 @@
       cache.clear();
     }
 
-    findProfilePuuid(profileRoot) {
+    async resolveProfilePuuid(profileRoot) {
       // 1. Profil ekranındaki regalia / puuid elemanları
       const elements = profileRoot ? profileRoot.querySelectorAll("lol-regalia-profile-v2-element, lol-regalia-identity-v2-element, [puuid]") : [];
       for (const el of elements) {
@@ -413,57 +439,88 @@
         if (typeof val === "string" && val.length > 20) return val;
       }
 
-      // 2. URL hash kontrolü (#/profile/UUID...)
+      // 2. summoner-id → puuid (başka bir oyuncunun profili olabilir)
+      const idEl = profileRoot?.querySelector?.("[summoner-id]") || profileRoot;
+      const summonerId = idEl?.getAttribute?.("summoner-id");
+      if (summonerId) {
+        if (cachedCurrentSummonerId && String(summonerId) === cachedCurrentSummonerId) {
+          return cachedCurrentSummonerPuuid;
+        }
+        try {
+          const res = await fetch(`/lol-summoner/v1/summoners/${encodeURIComponent(summonerId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && typeof data.puuid === "string" && data.puuid.length > 20) {
+              return data.puuid;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 3. URL hash kontrolü (#/profile/UUID...)
       const hash = window.location.hash || "";
       const match = hash.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
       if (match) return match[0];
 
-      // 3. Kendi profili
-      if (cachedCurrentSummonerPuuid) return cachedCurrentSummonerPuuid;
+      // 4. Sadece gerçekten kendi profilimizdeyse kendi puuid'imize dön.
+      //    Başka birinin profilinde yanlışlıkla kendi istatistiklerimizi göstermeyelim.
+      const nameEl = document.querySelector(".style-profile-name-and-title");
+      const shownName = (nameEl?.innerText || nameEl?.textContent || "").toLowerCase();
+      if (cachedCurrentSummonerName && shownName.includes(cachedCurrentSummonerName.toLowerCase())) {
+        return cachedCurrentSummonerPuuid;
+      }
 
       return null;
     }
 
-    checkAndRender() {
-      // Profil ekranının aktif olup olmadığını hafifçe kontrol et
-      const profileRoot =
-        document.querySelector('[data-screen-name="rcp-fe-lol-profiles-main"]') ||
-        document.querySelector("rcp-fe-lol-profiles") ||
-        document.querySelector(".style-profile-overview-component") ||
-        document.querySelector(".style-profile-name-and-title");
+    async checkAndRender() {
+      if (this._resolving) return;
+      this._resolving = true;
+      try {
+        await this.fetchCurrentSummonerOnce();
 
-      if (!profileRoot) {
-        if (this.currentPuuid) {
-          this.currentPuuid = null;
-          this.currentTargetParent = null;
-          const container = document.getElementById(CONTAINER_ID);
-          if (container) container.remove();
+        // Profil ekranının aktif olup olmadığını hafifçe kontrol et
+        const profileRoot =
+          document.querySelector('[data-screen-name="rcp-fe-lol-profiles-main"]') ||
+          document.querySelector("rcp-fe-lol-profiles") ||
+          document.querySelector(".style-profile-overview-component") ||
+          document.querySelector(".style-profile-name-and-title");
+
+        if (!profileRoot) {
+          if (this.currentPuuid) {
+            this.currentPuuid = null;
+            this.currentTargetParent = null;
+            const container = document.getElementById(CONTAINER_ID);
+            if (container) container.remove();
+          }
+          return;
         }
-        return;
+
+        // Tam kullanıcının ismini taşıyan blok (Hedef: İsmin hemen altı)
+        const targetParent =
+          document.querySelector(".style-profile-name-and-title") ||
+          document.querySelector(".style-profile-summoner-info-component") ||
+          document.querySelector("lol-regalia-identity-v2-element") ||
+          profileRoot;
+
+        const puuid = await this.resolveProfilePuuid(profileRoot);
+        if (!puuid) return;
+
+        const container = document.getElementById(CONTAINER_ID);
+        const isAlreadyAttached = container && targetParent.contains(container);
+
+        // Eğer PUUID aynıysa ve eleman zaten doğru yerde duruyorsa HİÇBİR ŞEY YAPMA (CPU sıfır)
+        if (this.currentPuuid === puuid && isAlreadyAttached && this.currentTargetParent === targetParent) {
+          return;
+        }
+
+        this.currentPuuid = puuid;
+        this.currentTargetParent = targetParent;
+        this.attachContainer(targetParent);
+        this.fetchAndRender(puuid);
+      } finally {
+        this._resolving = false;
       }
-
-      // Tam kullanıcının ismini taşıyan blok (Hedef: İsmin hemen altı)
-      const targetParent =
-        document.querySelector(".style-profile-name-and-title") ||
-        document.querySelector(".style-profile-summoner-info-component") ||
-        document.querySelector("lol-regalia-identity-v2-element") ||
-        profileRoot;
-
-      const puuid = this.findProfilePuuid(profileRoot);
-      if (!puuid) return;
-
-      const container = document.getElementById(CONTAINER_ID);
-      const isAlreadyAttached = container && targetParent.contains(container);
-
-      // Eğer PUUID aynıysa ve eleman zaten doğru yerde duruyorsa HİÇBİR ŞEY YAPMA (CPU sıfır)
-      if (this.currentPuuid === puuid && isAlreadyAttached && this.currentTargetParent === targetParent) {
-        return;
-      }
-
-      this.currentPuuid = puuid;
-      this.currentTargetParent = targetParent;
-      this.attachContainer(targetParent);
-      this.fetchAndRender(puuid);
     }
 
     attachContainer(targetParent) {
@@ -496,20 +553,28 @@
       const cacheKey = `${puuid}_${selectedQueue}_${gamesCount}`;
 
       let stats = null;
+      let failed = false;
       if (cache.has(cacheKey) && Date.now() - cache.get(cacheKey).time < 120000) {
         stats = cache.get(cacheKey).data;
       } else {
         try {
-          const endpoint = `/lol-match-history/v1/products/lol/${encodeURIComponent(puuid)}/matches?begIndex=0&endIndex=${gamesCount - 1}`;
+          // Kuyruk filtresi sonradan uygulandığı için daha geniş bir pencere çekiyoruz;
+          // aksi halde "son 40 maç" seçilince elde 5-10 dereceli maç kalıyordu.
+          const fetchCount = selectedQueue === "all"
+            ? gamesCount
+            : Math.min(200, Math.max(gamesCount * 5, 40));
+          const endpoint = `/lol-match-history/v1/products/lol/${encodeURIComponent(puuid)}/matches?begIndex=0&endIndex=${fetchCount - 1}`;
           const res = await fetch(endpoint);
           if (res.ok) {
             const json = await res.json();
-            stats = this.computeStats(json, puuid);
+            stats = this.computeStats(json, puuid, selectedQueue, gamesCount);
             cache.set(cacheKey, { data: stats, time: Date.now() });
           } else {
+            failed = true;
             console.warn(`[ProfileWinLose] Maç geçmişi HTTP ${res.status}`);
           }
         } catch (err) {
+          failed = true;
           console.warn("[ProfileWinLose] Maç geçmişi alınamadı:", err);
         }
       }
@@ -523,30 +588,37 @@
           <div class="c403-pwl-pill" title="Tıkla: Ayarları Aç" style="cursor: pointer;">
             <div class="c403-pwl-meta">
               <span class="c403-pwl-queue">${queueName}</span>
-              <span class="c403-pwl-count">Kayıt Bulunamadı</span>
+              <span class="c403-pwl-count">${failed ? "İstatistik alınamadı" : "Kayıt Bulunamadı"}</span>
             </div>
             <div class="c403-pwl-divider"></div>
             <div class="c403-pwl-row">
-              <span style="color: rgba(205,190,145,0.7); font-size: 11px;">0 Maç</span>
+              <span style="color: rgba(205,190,145,0.7); font-size: 11px;">${failed ? "Tekrar dene" : "0 Maç"}</span>
             </div>
           </div>
         `;
-        container.querySelector(".c403-pwl-pill")?.addEventListener("click", () => openModal());
+        container.querySelector(".c403-pwl-pill")?.addEventListener("click", () => {
+          cache.clear();
+          this.currentPuuid = null;
+          this.checkAndRender();
+        });
         return;
       }
 
+      const noGames = stats.totalGames === 0;
       container.innerHTML = `
         <div class="c403-pwl-pill" title="Tıkla: Mod Ayarlarını Aç">
           <div class="c403-pwl-meta">
             <span class="c403-pwl-queue">${queueName}</span>
-            <span class="c403-pwl-count">${stats.totalGames} Maç</span>
+            <span class="c403-pwl-count">${noGames ? "Bu modda maç yok" : `${stats.totalGames} Maç`}</span>
           </div>
           <div class="c403-pwl-divider"></div>
           <div class="c403-pwl-row">
-            <span class="c403-pwl-wins">${stats.wins}G</span>
-            <span class="c403-pwl-losses">${stats.losses}M</span>
-            <span class="c403-pwl-winrate">%${stats.winRate}</span>
-            ${CONFIG.kdaDisplay === "show" ? `<span class="c403-pwl-kda">${stats.kda} KDA</span>` : ""}
+            ${noGames
+              ? '<span style="color: rgba(205,190,145,0.7); font-size: 11px;">0 Maç</span>'
+              : `<span class="c403-pwl-wins">${stats.wins}G</span>
+                 <span class="c403-pwl-losses">${stats.losses}M</span>
+                 <span class="c403-pwl-winrate">%${stats.winRate}</span>
+                 ${CONFIG.kdaDisplay === "show" ? `<span class="c403-pwl-kda">${stats.kda} KDA</span>` : ""}`}
           </div>
         </div>
       `;
@@ -556,21 +628,18 @@
       });
     }
 
-    computeStats(data, puuid) {
+    computeStats(data, puuid, selectedQueue = CONFIG.selectedQueue, gamesCount = CONFIG.gamesCount) {
       if (!data || !Array.isArray(data.games?.games)) {
         return { wins: 0, losses: 0, totalGames: 0, winRate: "0.0", kda: "0.0" };
       }
 
-      const { selectedQueue, gamesCount } = CONFIG;
       const allGames = data.games.games;
 
+      const queue = QUEUE_TYPES[selectedQueue];
       const filtered =
-        selectedQueue === "all"
+        !queue || selectedQueue === "all"
           ? allGames
-          : allGames.filter((g) => {
-              const q = QUEUE_TYPES[selectedQueue];
-              return q.ids ? q.ids.includes(g.queueId) : g.queueId === q.id;
-            });
+          : allGames.filter((g) => (queue.ids ? queue.ids.includes(g.queueId) : g.queueId === queue.id));
 
       const slice = filtered.slice(0, gamesCount);
       let wins = 0;
@@ -580,6 +649,11 @@
       let totalAssists = 0;
 
       for (const game of slice) {
+        // Remake'leri (5 dakikadan kısa maçlar) istatistiğe katma.
+        if (typeof game.gameDuration === "number" && game.gameDuration > 0 && game.gameDuration < 300) {
+          continue;
+        }
+
         let player = game.participants?.find((p) => p.puuid === puuid);
         if (!player) {
           const ident = game.participantIdentities?.find((entry) => entry.player?.puuid === puuid);
@@ -695,7 +769,17 @@
     return modal;
   }
 
+  function closeOtherModals() {
+    [
+      "c403-bg-modal",
+      "c403-icon-swapper-modal",
+      "c403-skinviewer-info-modal",
+      "c403-soloq-settings-modal",
+    ].forEach((id) => document.getElementById(id)?.remove());
+  }
+
   function openModal() {
+    closeOtherModals();
     loadSettings();
     const modal = ensureModal();
     modal.querySelector("#c403-pwl-queue-select").value = CONFIG.selectedQueue;
